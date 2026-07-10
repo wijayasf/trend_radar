@@ -1,0 +1,17 @@
+ranking:
+  engagement_weight: 0.4
+  velocity_weight: 0.3
+  mention_growth_weight: 0.2
+  recency_weight: 0.1
+sentiment:
+  positive_weight: 1.0
+  neutral_weight: 0.0
+  mixed_weight: -0.2
+  negative_weight: -1.0
+emerging:
+  min_mentions: 5
+  growth_threshold: 0.35
+  lookback_days: 7
+cost_signal:
+  min_keyword_hits: 2
+  high_confidence_threshold: 0.7

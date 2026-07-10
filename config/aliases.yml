@@ -1,0 +1,188 @@
+agents:
+  - canonical_name: "Claude Code"
+    category: "coding_agent"
+    aliases:
+      - "Claude Code"
+      - "claude-code"
+      - "Claude coding agent"
+  - canonical_name: "Cursor"
+    category: "coding_assistant"
+    ambiguous: true
+    context_terms:
+      - "ai"
+      - "agent"
+      - "coding"
+      - "code"
+      - "ide"
+      - "composer"
+      - "tab"
+      - "repo"
+      - "developer"
+      - "dev"
+    aliases:
+      - "Cursor"
+      - "Cursor AI"
+      - "Cursor IDE"
+      - "Cursor Agent"
+  - canonical_name: "GitHub Copilot"
+    category: "coding_assistant"
+    aliases:
+      - "GitHub Copilot"
+      - "Copilot"
+  - canonical_name: "Codex CLI"
+    category: "coding_agent"
+    ambiguous: true
+    context_terms:
+      - "openai"
+      - "agent"
+      - "coding"
+      - "code"
+      - "cli"
+      - "repo"
+    aliases:
+      - "Codex CLI"
+      - "OpenAI Codex"
+      - "Codex"
+  - canonical_name: "Cline"
+    category: "coding_agent"
+    aliases:
+      - "Cline"
+  - canonical_name: "OpenCode"
+    category: "coding_agent"
+    aliases:
+      - "OpenCode"
+      - "Open Code"
+  - canonical_name: "Aider"
+    category: "coding_agent"
+    aliases:
+      - "Aider"
+      - "aider.chat"
+  - canonical_name: "Devin"
+    category: "coding_agent"
+    aliases:
+      - "Devin"
+      - "Devin AI"
+  - canonical_name: "Gemini CLI"
+    category: "coding_agent"
+    aliases:
+      - "Gemini CLI"
+      - "Google Gemini CLI"
+  - canonical_name: "Windsurf"
+    category: "coding_assistant"
+    aliases:
+      - "Windsurf"
+      - "Codeium Windsurf"
+  - canonical_name: "Replit Agent"
+    category: "app_builder"
+    aliases:
+      - "Replit Agent"
+  - canonical_name: "Bolt"
+    category: "app_builder"
+    ambiguous: true
+    context_terms:
+      - "ai"
+      - "app"
+      - "builder"
+      - "stackblitz"
+      - "agent"
+      - "code"
+    aliases:
+      - "Bolt"
+      - "Bolt.new"
+      - "StackBlitz Bolt"
+  - canonical_name: "Lovable"
+    category: "app_builder"
+    aliases:
+      - "Lovable"
+      - "Lovable.dev"
+  - canonical_name: "LangChain"
+    category: "generic_agent_framework"
+    aliases:
+      - "LangChain"
+  - canonical_name: "LangGraph"
+    category: "generic_agent_framework"
+    aliases:
+      - "LangGraph"
+      - "Lang Graph"
+  - canonical_name: "CrewAI"
+    category: "generic_agent_framework"
+    aliases:
+      - "CrewAI"
+      - "Crew AI"
+  - canonical_name: "AutoGen"
+    category: "generic_agent_framework"
+    aliases:
+      - "AutoGen"
+      - "Microsoft AutoGen"
+      - "Auto Gen"
+  - canonical_name: "LlamaIndex"
+    category: "generic_agent_framework"
+    aliases:
+      - "LlamaIndex"
+      - "Llama Index"
+  - canonical_name: "Semantic Kernel"
+    category: "generic_agent_framework"
+    aliases:
+      - "Semantic Kernel"
+      - "Microsoft Semantic Kernel"
+  - canonical_name: "Google ADK"
+    category: "generic_agent_framework"
+    ambiguous: true
+    context_terms:
+      - "google"
+      - "agent"
+      - "framework"
+      - "gemini"
+      - "adk"
+    aliases:
+      - "Google ADK"
+      - "Agent Development Kit"
+      - "ADK"
+  - canonical_name: "OpenAI Agents SDK"
+    category: "generic_agent_framework"
+    aliases:
+      - "OpenAI Agents SDK"
+      - "Agents SDK"
+      - "OpenAI Agent SDK"
+  - canonical_name: "Caveman"
+    category: "skill_or_mode"
+    aliases:
+      - "Caveman"
+      - "Cavemen"
+      - "Caveman mode"
+      - "Cavemen mode"
+  - canonical_name: "Ponytail"
+    category: "skill_or_mode"
+    aliases:
+      - "Ponytail"
+      - "Ponytail mode"
+  - canonical_name: "MCP"
+    category: "mcp_or_connector"
+    ambiguous: true
+    context_terms:
+      - "agent"
+      - "server"
+      - "connector"
+      - "tools"
+      - "claude"
+      - "cursor"
+      - "protocol"
+      - "registry"
+    aliases:
+      - "MCP"
+      - "MCP server"
+      - "Model Context Protocol"
+  - canonical_name: "ExplainX"
+    category: "registry_or_discovery"
+    aliases:
+      - "ExplainX"
+      - "Explain X"
+      - "explainx.ai"
+regions:
+  indonesia:
+    - id
+    - indonesia
+    - bahasa indonesia
+  global:
+    - global
+    - worldwide

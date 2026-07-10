@@ -1,0 +1,72 @@
+[
+  {
+    "post_id": "sample-threads-001",
+    "text": "Claude Code boros token tapi ngebantu debug repo, anak dev indo mulai pakai.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-001",
+    "posted_at": "2026-07-01T09:00:00Z"
+  },
+  {
+    "post_id": "sample-threads-002",
+    "text": "Cursor AI feels fast for pair programming, especially when the codebase context is clean.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-002",
+    "posted_at": "2026-07-01T10:00:00Z"
+  },
+  {
+    "post_id": "sample-threads-003",
+    "text": "Di Jakarta, GitHub Copilot masih kepakai buat autocomplete tim developer Indonesia.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-003",
+    "posted_at": "2026-07-02T08:30:00Z"
+  },
+  {
+    "post_id": "sample-threads-004",
+    "text": "Codex CLI is useful when I want terminal-first coding agent help without leaving the repo.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-004",
+    "posted_at": "2026-07-02T11:45:00Z"
+  },
+  {
+    "post_id": "sample-threads-005",
+    "text": "Cavemen mode cocok buat kantor gue di Bandung biar agent change tetap kecil.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-005",
+    "posted_at": "2026-07-03T07:15:00Z"
+  },
+  {
+    "post_id": "sample-threads-006",
+    "text": "Ponytail.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-006",
+    "posted_at": "2026-07-03T13:20:00Z"
+  },
+  {
+    "post_id": "sample-threads-007",
+    "text": "ExplainX has many AI agent skills and makes discovery easier for internal workflows.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-007",
+    "posted_at": "2026-07-04T09:40:00Z"
+  },
+  {
+    "post_id": "sample-threads-008",
+    "text": "MCP server buat Claude Code dan Cursor mulai dibahas anak dev indo karena connector reuse lebih rapi.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-008",
+    "posted_at": "2026-07-04T15:10:00Z"
+  },
+  {
+    "post_id": "sample-threads-009",
+    "text": "Cline is still a strong coding agent when you want explicit approval before file edits.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-009",
+    "posted_at": "2026-07-05T12:05:00Z"
+  },
+  {
+    "post_id": "sample-threads-010",
+    "text": "OpenCode.",
+    "media_type": "TEXT",
+    "permalink": "sample://threads/sample-threads-010",
+    "posted_at": "2026-07-05T16:25:00Z"
+  }
+]

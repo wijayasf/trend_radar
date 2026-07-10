@@ -1,0 +1,68 @@
+# DuckDB Schema Foundation
+
+This is the MVP local storage boundary for AI Agent Trend Radar. It is intentionally small and can be migrated later when ingestion and reporting requirements become clearer.
+
+## Storage Boundary
+
+- `threads_posts_raw` stores raw Threads post records and source metadata.
+- `agent_mentions` stores normalized AI agent/tool mentions detected inside raw posts.
+- `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
+
+No Threads access token, API key, or app secret should ever be stored in DuckDB.
+
+## Tables
+
+### threads_posts_raw
+
+Raw local archive of Threads posts collected for trend analysis.
+
+- `post_id`: Threads post identifier.
+- `thread_id`: Optional parent/thread identifier.
+- `author_id`: Threads author identifier from API data.
+- `author_username`: Display username if available.
+- `text`: Post text.
+- `permalink`: Optional post URL.
+- `media_type`: Optional Threads media type from the API response.
+- `language`: Optional detected or API-provided language.
+- `region_hint`: Optional region hint such as `indonesia`, `global`, or `unknown`.
+- `region_confidence`: Rule-based classifier confidence for the post region.
+- `region_reason`: Short explainable reason for the post region label.
+- Engagement fields: like, reply, repost, and quote counts.
+- `posted_at`: Post timestamp from Threads.
+- `collected_at`: Local collection timestamp.
+- `raw_json`: Optional raw API payload as text for replay/debugging.
+
+### agent_mentions
+
+Normalized entity extraction results derived from raw posts.
+
+- `mention_id`: Stable local mention identifier.
+- `post_id`: Source post identifier.
+- `agent_name`: Normalized agent/tool name.
+- `agent_alias`: Matched alias or raw mention text.
+- `category`: MVP entity category such as `coding_agent`, `skill_or_mode`, `mcp_or_connector`, or `registry_or_discovery`.
+- `region`: `indonesia`, `global`, or `unknown`.
+- `region_confidence`: Rule-based classifier confidence copied from the source post classification.
+- `region_reason`: Short explainable reason copied from the source post classification.
+- `confidence`: Numeric confidence from deterministic rules or future classifier.
+- `match_confidence`: Alias/context match confidence from deterministic entity rules.
+- `relevance_score`: Lightweight score for whether the mention appears in an agent/tool context.
+- `sentiment`: Placeholder field for future sentiment classifier; currently `unknown`.
+- `cost_signal`: Placeholder field for future cost classifier; currently `none`.
+- `source_snippet`: Short post text snippet for UI preview and local audit.
+- `detected_at`: Local detection timestamp.
+
+### weekly_agent_metrics
+
+Aggregated weekly reporting table.
+
+- Primary key: `week_start`, `region`, `agent_name`.
+- Counts: mentions, unique authors, sentiment counts, and cost-signal counts.
+- `trend_score`: Computed ranking score.
+- `computed_at`: Local computation timestamp.
+
+## Assumptions
+
+- Raw, normalized, and aggregated data stay separate for auditability.
+- Schema initialization uses `CREATE TABLE IF NOT EXISTS` for MVP.
+- A fuller migration system should be introduced only when schema changes become frequent or data migration becomes risky.

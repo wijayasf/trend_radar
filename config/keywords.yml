@@ -1,0 +1,54 @@
+keywords:
+  coding_agents:
+    - "Claude Code"
+    - "Cursor AI"
+    - "GitHub Copilot"
+    - "Codex"
+    - "Cline"
+    - "OpenCode"
+    - "Aider"
+    - "Devin"
+    - "Gemini CLI"
+    - "Windsurf"
+    - "Replit Agent"
+    - "Bolt"
+    - "Lovable"
+  generic_frameworks:
+    - "AI Agent"
+    - "agentic AI"
+    - "multi-agent"
+    - "LlamaIndex"
+    - "LangGraph"
+    - "LangChain"
+    - "CrewAI"
+    - "AutoGen"
+    - "Semantic Kernel"
+    - "Google ADK"
+    - "OpenAI Agents SDK"
+  skills_modes_registry:
+    - "Caveman"
+    - "Cavemen"
+    - "Ponytail"
+    - "ExplainX"
+    - "explainx.ai"
+    - "MCP"
+    - "MCP server"
+    - "Model Context Protocol"
+    - "AI agent skills"
+cost_signals:
+  expensive:
+    - mahal
+    - expensive
+    - pricey
+  token_heavy:
+    - boros token
+    - token heavy
+    - burns tokens
+  quota_limited:
+    - quota cepat habis
+    - rate limit
+    - limit cepat habis
+  worth_it:
+    - worth it
+    - sepadan
+    - value for money
