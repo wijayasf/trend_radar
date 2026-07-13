@@ -59,6 +59,40 @@ h1 {
   line-height: 1.7;
 }
 
+.demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 28px;
+}
+
+.demo-actions button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 16px;
+  background: #27606d;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.demo-actions button:nth-child(2) {
+  background: #8b4a2f;
+}
+
+.demo-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.demo-actions span {
+  color: #4e5a5f;
+  font-size: 0.92rem;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -93,6 +127,87 @@ h1 {
   color: #687478;
   font-size: 0.92rem;
   overflow-wrap: anywhere;
+}
+
+.step-status {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 14px;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #eef1ed;
+  color: #4e5a5f;
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.step-status.ready {
+  background: #e7f0f2;
+  color: #27606d;
+}
+
+.step-status.running {
+  background: #fff1dc;
+  color: #8b4a2f;
+}
+
+.step-status.completed {
+  background: #e4f2e9;
+  color: #276342;
+}
+
+.step-status.needs-attention {
+  background: #fff1dc;
+  color: #8b4a2f;
+}
+
+.step-status.error {
+  background: #f8e4df;
+  color: #9d301d;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.summary-card {
+  min-height: 94px;
+  border: 1px solid rgba(24, 32, 36, 0.12);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.summary-card span,
+.summary-card strong {
+  display: block;
+}
+
+.summary-card span {
+  color: #687478;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.summary-card strong {
+  margin-top: 14px;
+  color: #182024;
+  font-size: 1.45rem;
+  overflow-wrap: anywhere;
+}
+
+.summary-card.wide {
+  grid-column: span 2;
+}
+
+.summary-card.wide strong {
+  font-size: 0.92rem;
+  line-height: 1.45;
 }
 
 .collector-panel {
@@ -362,6 +477,10 @@ h1 {
 
   .status-grid {
     grid-template-columns: 1fr;
+  }
+
+  .summary-card.wide {
+    grid-column: span 1;
   }
 
   .collector-panel,

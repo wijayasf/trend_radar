@@ -2,12 +2,43 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
 
-  const phases = [
-    'Foundation scaffold',
-    'Local DuckDB storage',
-    'Threads API ingestion',
-    'Entity detection',
-    'Weekly export',
+  const flowSteps = [
+    {
+      number: '1',
+      key: 'discovery',
+      label: 'Discovery',
+      description: 'Find broad AI Agent conversation and collect raw posts.',
+    },
+    {
+      number: '2',
+      key: 'entities',
+      label: 'Entity Detection',
+      description: 'Extract tools, agents, skills, MCP terms, and candidates.',
+    },
+    {
+      number: '3',
+      key: 'candidates',
+      label: 'Candidate Review',
+      description: 'Approve, ignore, or normalize newly discovered names.',
+    },
+    {
+      number: '4',
+      key: 'classification',
+      label: 'Classification',
+      description: 'Classify region, sentiment, and cost/boros signals.',
+    },
+    {
+      number: '5',
+      key: 'weekly',
+      label: 'Weekly Metrics',
+      description: 'Rank agents by region and trend score.',
+    },
+    {
+      number: '6',
+      key: 'export',
+      label: 'Export Report',
+      description: 'Write Markdown and CSV outputs for the weekly report.',
+    },
   ];
 
   let databaseHealth = 'Checking local database...';
@@ -88,6 +119,9 @@
   let csvExportPreview = '';
   let isExportingMarkdown = false;
   let isExportingCsv = false;
+  let demoStatus = 'Idle';
+  let isRunningFullSampleDemo = false;
+  let isRunningFullRealFlow = false;
   let candidateReviewStatus = 'Idle';
   let candidateEntities: CandidateEntityReview[] = [];
   let pendingCandidateCount = 0;
@@ -109,6 +143,14 @@
     'app_builder',
     'unknown',
   ];
+
+  type StepStatus =
+    | 'Not started'
+    | 'Ready'
+    | 'Running'
+    | 'Completed'
+    | 'Needs attention'
+    | 'Error';
 
   type ThreadsCollectionResult = {
     keyword: string;
@@ -319,6 +361,88 @@
     }
   });
 
+  function latestExportPath() {
+    return markdownExportPath || csvExportPath || 'None yet';
+  }
+
+  function stepStatus(step: string): StepStatus {
+    if (step === 'discovery') {
+      if (isRunningDiscovery || isCollecting || isImportingSamples) return 'Running';
+      if (isErrorStatus(discoveryStatus) || isErrorStatus(collectStatus)) return 'Error';
+      if (discoveryTextMissingTotal > 0) return 'Needs attention';
+      if (rawPostsCount > 0) return 'Completed';
+      return threadsTokenConfigured || envFileLoaded ? 'Ready' : 'Not started';
+    }
+
+    if (step === 'entities') {
+      if (isDetecting) return 'Running';
+      if (isErrorStatus(detectStatus)) return 'Error';
+      if (mentionsFound > 0 || savedMentions > 0) return 'Completed';
+      return rawPostsCount > 0 ? 'Ready' : 'Not started';
+    }
+
+    if (step === 'candidates') {
+      if (isLoadingCandidates || activeCandidateAction) return 'Running';
+      if (isErrorStatus(candidateReviewStatus)) return 'Error';
+      if (pendingCandidateCount > 0) return 'Needs attention';
+      if (approvedDecisionCount > 0 || ignoredDecisionCount > 0 || approvedCandidateCount > 0) {
+        return 'Completed';
+      }
+      return savedMentions > 0 ? 'Ready' : 'Not started';
+    }
+
+    if (step === 'classification') {
+      if (isClassifyingRegions || isClassifyingSentiments || isClassifyingCostSignals) {
+        return 'Running';
+      }
+      if (isErrorStatus(regionStatus) || isErrorStatus(sentimentStatus) || isErrorStatus(costStatus)) {
+        return 'Error';
+      }
+      if (regionUpdatedMentions > 0 && sentimentUpdatedMentions > 0 && costUpdatedMentions > 0) {
+        return 'Completed';
+      }
+      return savedMentions > 0 ? 'Ready' : 'Not started';
+    }
+
+    if (step === 'weekly') {
+      if (isAggregatingWeeklyMetrics) return 'Running';
+      if (isErrorStatus(weeklyStatus)) return 'Error';
+      if (weeklyMetricsCount > 0) return 'Completed';
+      return costUpdatedMentions > 0 ? 'Ready' : 'Not started';
+    }
+
+    if (step === 'export') {
+      if (isExportingMarkdown || isExportingCsv) return 'Running';
+      if (isErrorStatus(markdownExportStatus) || isErrorStatus(csvExportStatus)) return 'Error';
+      if (markdownExportPath || csvExportPath) return 'Completed';
+      return weeklyMetricsCount > 0 ? 'Ready' : 'Not started';
+    }
+
+    return 'Not started';
+  }
+
+  function statusClass(status: StepStatus) {
+    return `step-status ${status.toLowerCase().replace(/\s+/g, '-')}`;
+  }
+
+  function isErrorStatus(status: string) {
+    return status.toLowerCase().startsWith('error');
+  }
+
+  function friendlyError(error: unknown) {
+    const raw = String(error);
+    if (raw.includes('code=10') || raw.includes('Application does not have permission')) {
+      return 'Threads keyword search permission missing. Add threads_keyword_search in Meta Developer Permissions, regenerate the token, and try again.';
+    }
+    if (raw.includes('agent_mentions_compatible') || raw.includes('Catalog Error')) {
+      return 'Local DuckDB schema needs attention. Restart the app so schema initialization can run, then try again.';
+    }
+    if (raw.toLowerCase().includes('text is unavailable') || raw.toLowerCase().includes('text_missing')) {
+      return 'Post detail was fetched, but text is unavailable for one or more posts.';
+    }
+    return raw;
+  }
+
   async function collectThreads() {
     const nextKeyword = keyword.trim();
     if (!nextKeyword || isCollecting) return;
@@ -334,7 +458,10 @@
       });
       fetchedCount = result.fetched_count;
       savedCount = result.saved_count;
-      collectStatus = result.message;
+      collectStatus =
+        result.fetched_count === 0
+          ? `Keyword search completed for "${nextKeyword}", but no posts were returned. Try a broader keyword or confirm Threads search scope.`
+          : result.message;
       await refreshRawPostsCount();
       clearLastApiError();
     } catch (error) {
@@ -406,7 +533,7 @@
       }));
       candidateReviewStatus = `${result.message} ${decisions.message}`;
     } catch (error) {
-      candidateReviewStatus = `error: ${String(error)}`;
+      candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       isLoadingCandidates = false;
     }
@@ -432,7 +559,7 @@
       candidateReviewStatus = result.message;
       await loadCandidateEntities();
     } catch (error) {
-      candidateReviewStatus = `error: ${String(error)}`;
+      candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       activeCandidateAction = '';
     }
@@ -452,7 +579,7 @@
       candidateReviewStatus = result.message;
       await loadCandidateEntities();
     } catch (error) {
-      candidateReviewStatus = `error: ${String(error)}`;
+      candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       activeCandidateAction = '';
     }
@@ -471,7 +598,7 @@
       candidateReviewStatus = result.message;
       await loadCandidateEntities();
     } catch (error) {
-      candidateReviewStatus = `error: ${String(error)}`;
+      candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       activeCandidateAction = '';
     }
@@ -511,10 +638,15 @@
       discoveryFailedSeeds = result.failed_seeds;
       discoveryMode = result.mode;
       discoveryErrors = result.errors;
-      discoveryStatus = result.message;
+      discoveryStatus =
+        result.fetched_total === 0
+          ? 'Discovery search completed, but no posts were returned. Tester/public search scope or seed keywords may need adjustment.'
+          : result.text_missing_total > 0
+            ? `${result.message} ${result.text_missing_total} posts had no text available after detail fetch.`
+            : result.message;
       await refreshRawPostsCount();
     } catch (error) {
-      discoveryStatus = `error: ${String(error)}`;
+      discoveryStatus = `error: ${friendlyError(error)}`;
     } finally {
       isRunningDiscovery = false;
     }
@@ -525,7 +657,7 @@
     const code = raw.match(/\bcode=([^ ]+)/)?.[1] ?? 'none';
     const type = raw.match(/\btype=([^ ]+)/)?.[1] ?? 'none';
     const message = raw.match(/\bmessage=(.*)$/)?.[1]?.trim() ?? raw;
-    const friendly = raw.split(' code=')[0];
+    const friendly = friendlyError(raw.split(' code=')[0]);
 
     return { code, type, message, friendly };
   }
@@ -549,7 +681,7 @@
       detectStatus = result.message;
       await loadCandidateEntities();
     } catch (error) {
-      detectStatus = `error: ${String(error)}`;
+      detectStatus = `error: ${friendlyError(error)}`;
     } finally {
       isDetecting = false;
     }
@@ -576,7 +708,7 @@
       detectionPreview = result.preview;
       regionStatus = result.message;
     } catch (error) {
-      regionStatus = `error: ${String(error)}`;
+      regionStatus = `error: ${friendlyError(error)}`;
     } finally {
       isClassifyingRegions = false;
     }
@@ -605,7 +737,7 @@
       detectionPreview = result.preview;
       sentimentStatus = result.message;
     } catch (error) {
-      sentimentStatus = `error: ${String(error)}`;
+      sentimentStatus = `error: ${friendlyError(error)}`;
     } finally {
       isClassifyingSentiments = false;
     }
@@ -634,7 +766,7 @@
       detectionPreview = result.preview;
       costStatus = result.message;
     } catch (error) {
-      costStatus = `error: ${String(error)}`;
+      costStatus = `error: ${friendlyError(error)}`;
     } finally {
       isClassifyingCostSignals = false;
     }
@@ -664,7 +796,7 @@
       topUnknown = result.top_unknown;
       weeklyStatus = result.message;
     } catch (error) {
-      weeklyStatus = `error: ${String(error)}`;
+      weeklyStatus = `error: ${friendlyError(error)}`;
     } finally {
       isAggregatingWeeklyMetrics = false;
     }
@@ -684,7 +816,7 @@
       markdownExportPath = result.file_path;
       markdownExportPreview = result.preview;
     } catch (error) {
-      markdownExportStatus = `error: ${String(error)}`;
+      markdownExportStatus = `error: ${friendlyError(error)}`;
     } finally {
       isExportingMarkdown = false;
     }
@@ -704,9 +836,51 @@
       csvExportPath = result.file_path;
       csvExportPreview = result.preview;
     } catch (error) {
-      csvExportStatus = `error: ${String(error)}`;
+      csvExportStatus = `error: ${friendlyError(error)}`;
     } finally {
       isExportingCsv = false;
+    }
+  }
+
+  async function runFullSampleDemo() {
+    if (isRunningFullSampleDemo || isRunningFullRealFlow) return;
+
+    isRunningFullSampleDemo = true;
+    demoStatus = 'Running full sample demo...';
+
+    try {
+      await importSamplePosts();
+      await detectAgentMentions();
+      await classifyRegions();
+      await classifySentiments();
+      await classifyCostSignals();
+      await aggregateWeeklyMetrics();
+      demoStatus = 'Sample demo completed. Review candidates manually, then export when ready.';
+    } catch (error) {
+      demoStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isRunningFullSampleDemo = false;
+    }
+  }
+
+  async function runFullRealFlow() {
+    if (isRunningFullSampleDemo || isRunningFullRealFlow) return;
+
+    isRunningFullRealFlow = true;
+    demoStatus = 'Running real discovery flow...';
+
+    try {
+      await runDiscoveryCrawl();
+      await detectAgentMentions();
+      await classifyRegions();
+      await classifySentiments();
+      await classifyCostSignals();
+      await aggregateWeeklyMetrics();
+      demoStatus = 'Real flow completed. Review pending candidates manually before relying on rankings.';
+    } catch (error) {
+      demoStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isRunningFullRealFlow = false;
     }
   }
 </script>
@@ -717,38 +891,67 @@
       <p class="eyebrow">Local-first desktop intelligence</p>
       <h1>AI Agent Trend Radar</h1>
       <p>
-        Foundation scaffold for tracking AI Agent trends from Threads and preparing weekly
-        Indonesia/global reports.
+        Guided workflow for discovering AI Agent signals, reviewing candidates, ranking weekly
+        trends, and exporting local reports.
       </p>
     </div>
 
-    <div class="status-grid" aria-label="Project status">
-      {#each phases as phase, index}
+    <div class="demo-actions" aria-label="Demo actions">
+      <button type="button" on:click={runFullSampleDemo} disabled={isRunningFullSampleDemo || isRunningFullRealFlow}>
+        {isRunningFullSampleDemo ? 'Running Sample Demo' : 'Run Full Sample Demo'}
+      </button>
+      <button type="button" on:click={runFullRealFlow} disabled={isRunningFullSampleDemo || isRunningFullRealFlow}>
+        {isRunningFullRealFlow ? 'Running Real Flow' : 'Run Full Real Flow'}
+      </button>
+      <span>{demoStatus}</span>
+    </div>
+
+    <div class="status-grid" aria-label="Workflow status">
+      {#each flowSteps as step}
         <article class="status-card">
-          <span>{String(index + 1).padStart(2, '0')}</span>
-          <strong>{phase}</strong>
-          <p>
-            {index === 0
-              ? 'Ready'
-              : index === 1
-                ? databaseHealth
-                : index === 2
-                  ? collectStatus
-                  : index === 3
-                    ? `${detectStatus} / ${regionStatus} / ${sentimentStatus} / ${costStatus} / ${weeklyStatus}`
-                    : 'Planned'}
-          </p>
+          <span>{step.number}</span>
+          <strong>{step.label}</strong>
+          <p>{step.description}</p>
+          <em class={statusClass(stepStatus(step.key))}>
+            {stepStatus(step.key)}
+          </em>
         </article>
       {/each}
     </div>
 
+    <div class="summary-grid" aria-label="Dashboard summary">
+      <article class="summary-card">
+        <span>Raw posts</span>
+        <strong>{rawPostsCount}</strong>
+      </article>
+      <article class="summary-card">
+        <span>Mentions</span>
+        <strong>{savedMentions || mentionsFound}</strong>
+      </article>
+      <article class="summary-card">
+        <span>Pending candidates</span>
+        <strong>{pendingCandidateCount}</strong>
+      </article>
+      <article class="summary-card">
+        <span>Approved decisions</span>
+        <strong>{approvedDecisionCount}</strong>
+      </article>
+      <article class="summary-card">
+        <span>Weekly metrics rows</span>
+        <strong>{weeklyMetricsCount}</strong>
+      </article>
+      <article class="summary-card wide">
+        <span>Last export path</span>
+        <strong>{latestExportPath()}</strong>
+      </article>
+    </div>
+
     <section class="collector-panel" aria-label="AI Agent discovery crawler">
       <div>
-        <p class="panel-label">AI Agent discovery crawler</p>
+        <p class="panel-label">1. Discovery</p>
         <h2>Run broad topic discovery</h2>
         <p class="panel-note">
-          Discovery crawl searches broad AI Agent topics first, then entity detection extracts
-          tool/agent names from collected posts.
+          Search broad AI Agent conversations first, then save raw posts for the local pipeline.
         </p>
       </div>
 
@@ -798,8 +1001,11 @@
 
     <section class="collector-panel" aria-label="Threads keyword collector">
       <div>
-        <p class="panel-label">Threads keyword collector</p>
+        <p class="panel-label">1. Discovery</p>
         <h2>Collect raw posts</h2>
+        <p class="panel-note">
+          Use a single keyword for focused debugging, or import sample posts for a repeatable demo.
+        </p>
       </div>
 
       <form on:submit|preventDefault={collectThreads}>
@@ -841,8 +1047,11 @@
     <section class="detector-panel" aria-label="Agent mention detector">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Entity detector</p>
+          <p class="panel-label">2. Entity Detection</p>
           <h2>Detect agent mentions</h2>
+          <p class="panel-note">
+            Find tools, agents, skills, MCP terms, and candidate names from collected posts.
+          </p>
         </div>
         <button type="button" on:click={detectAgentMentions} disabled={isDetecting}>
           {isDetecting ? 'Detecting' : 'Detect Agent Mentions'}
@@ -896,8 +1105,11 @@
     <section class="detector-panel" aria-label="Candidate review">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Candidate review</p>
+          <p class="panel-label">3. Candidate Review</p>
           <h2>Review Unknown Candidates</h2>
+          <p class="panel-note">
+            Approve, ignore, or normalize newly discovered candidate names before they affect trends.
+          </p>
         </div>
         <button type="button" on:click={loadCandidateEntities} disabled={isLoadingCandidates}>
           {isLoadingCandidates ? 'Refreshing' : 'Refresh Candidates'}
@@ -1045,8 +1257,11 @@
     <section class="detector-panel" aria-label="Region classifier">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Region classifier</p>
+          <p class="panel-label">4. Classification</p>
           <h2>Classify Indonesia vs Global</h2>
+          <p class="panel-note">
+            Label posts as Indonesia, global, or unknown for regional trend ranking.
+          </p>
         </div>
         <button type="button" on:click={classifyRegions} disabled={isClassifyingRegions}>
           {isClassifyingRegions ? 'Classifying' : 'Classify Regions'}
@@ -1066,8 +1281,11 @@
     <section class="detector-panel" aria-label="Sentiment classifier">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Sentiment classifier</p>
+          <p class="panel-label">4. Classification</p>
           <h2>Classify Sentiments</h2>
+          <p class="panel-note">
+            Estimate positive, neutral, negative, or mixed opinion signals for detected mentions.
+          </p>
         </div>
         <button
           type="button"
@@ -1092,8 +1310,11 @@
     <section class="detector-panel" aria-label="Cost signal classifier">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Cost signal classifier</p>
+          <p class="panel-label">4. Classification</p>
           <h2>Classify Cost Signals</h2>
+          <p class="panel-note">
+            Detect cost, quota, and boros-token signals without sending data to an external model.
+          </p>
         </div>
         <button
           type="button"
@@ -1118,8 +1339,11 @@
     <section class="detector-panel" aria-label="Weekly trend metrics">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Weekly trend metrics</p>
+          <p class="panel-label">5. Weekly Metrics</p>
           <h2>Aggregate Weekly Metrics</h2>
+          <p class="panel-note">
+            Rank approved and known entities by region, sentiment mix, boros signal, and trend score.
+          </p>
         </div>
         <button
           type="button"
@@ -1159,8 +1383,11 @@
     <section class="detector-panel" aria-label="Report export">
       <div class="detector-header">
         <div>
-          <p class="panel-label">Report export</p>
+          <p class="panel-label">6. Export Report</p>
           <h2>Export Weekly Report</h2>
+          <p class="panel-note">
+            Save Markdown and CSV outputs locally for weekly review or presentation.
+          </p>
         </div>
         <div class="export-actions">
           <button type="button" on:click={exportMarkdownReport} disabled={isExportingMarkdown}>

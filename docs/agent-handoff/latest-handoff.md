@@ -1,51 +1,58 @@
 # Latest Handoff
 
 Date: 2026-07-13
-Session: 029-duckdb-schema-compat-fix
+Session: 030-ui-demo-polish
 Agent: Codex
 
 ## Current State
 
-The DuckDB runtime error involving `agent_mentions_compatible` has been fixed.
+The MVP pipeline remains intact and the desktop UI has been polished for a clearer guided demo flow.
 
-## Root Cause
+## Completed This Session
 
-`agent_mentions_compatible` was a stale temporary compatibility migration table used to recreate `agent_mentions`.
-
-The migration was still executed on every schema initialization. Raw post save calls schema initialization first, so the compatibility migration failure appeared as:
-
-```text
-DuckDB raw post insert failed: Catalog Error: Table with name agent_mentions_compatible does not exist!
-```
-
-## Fix
-
-- Removed the `agent_mentions_compatible` migration.
-- Removed all source/runtime references to `agent_mentions_compatible`; documentation keeps historical notes for this fix.
-- Schema initialization now relies on additive `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements.
-- No local DuckDB deletion is required.
+- Added six visible workflow steps:
+  - Discovery
+  - Entity Detection
+  - Candidate Review
+  - Classification
+  - Weekly Metrics
+  - Export Report
+- Added step status badges for Not started, Ready, Running, Completed, Needs attention, and Error.
+- Added dashboard summary cards:
+  - Raw posts
+  - Mentions
+  - Pending candidates
+  - Approved decisions
+  - Weekly metrics rows
+  - Last export path
+- Added guided buttons:
+  - `Run Full Sample Demo`
+  - `Run Full Real Flow`
+- Added section explanations and friendlier UI messaging for common Threads/DuckDB states.
+- Updated README with guided demo notes.
 
 ## Validation
 
-- `grep -R "agent_mentions_compatible" -n src-tauri/src docs README.md || true`: source/runtime references removed; remaining matches are documentation notes for this fix.
-- `cargo test validates_raw_post_insert_after_schema_init -- --test-threads=1`: passed.
+- `npx tauri dev`: launch-smoke passed; Vite started, Tauri compiled, and the desktop binary launched without startup errors.
 - `npm run build`: passed.
 - `cargo fmt --check`: passed.
 - `cargo check`: passed.
+  - Existing Rust placeholder/dead-code warnings remain.
 - `cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
+- Security grep checks found no real token or app secret values in tracked files.
 
 ## Pending
 
-- Manual UI confirmation:
-  1. `npx tauri dev`
-  2. Run Discovery Crawl or Collect raw posts
-  3. Confirm no missing compatibility table error
+- Human click-through before demo:
+  1. Run Full Sample Demo
+  2. Confirm summary cards, step statuses, weekly metrics, and export controls behave as expected
+  3. Optionally run Full Real Flow if Threads tester posts are still searchable
 
 ## Risk Note
 
-- The MVP schema path avoids destructive table recreation now.
-- If a much older local DB has stale CHECK constraints, a targeted non-destructive migration may still be needed later.
-- Existing Rust placeholder dead-code warnings remain.
+- UI-only orchestration was changed; backend collector, classifier, schema, and report logic were not intentionally changed.
+- Full-flow buttons rely on the existing command statuses. If one command returns a friendly error without throwing, later steps may still run and surface their own status.
+- `Run Full Real Flow` does not auto-approve candidates or auto-export reports.
 - Token and `.env` contents were not read or printed.
 
 ## Token Usage

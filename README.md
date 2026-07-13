@@ -142,6 +142,13 @@ then entity detection extracts specific tools, agents, skills, MCP terms, and ca
 When Threads keyword search returns IDs only, the backend attempts a safe post detail fetch before
 entity detection runs.
 
+The desktop UI includes guided demo controls:
+
+- `Run Full Sample Demo` imports sample posts and runs detection, classification, and weekly metrics.
+- `Run Full Real Flow` runs discovery against Threads, then detection, classification, and weekly metrics.
+
+Candidate review remains manual so new or unknown entities are not approved automatically.
+
 ## Project Structure
 
 ```text
