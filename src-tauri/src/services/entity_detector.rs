@@ -86,6 +86,7 @@ fn detect_mentions_in_text(
 
     let mut seen_agents = HashSet::new();
     let mut mentions = Vec::new();
+    let known_aliases = known_aliases(config);
 
     for agent in &config.agents {
         if seen_agents.contains(&agent.canonical_name) {
@@ -100,6 +101,8 @@ fn detect_mentions_in_text(
                 agent_name: agent.canonical_name.clone(),
                 agent_alias: matched_alias.clone(),
                 category: agent.category.clone(),
+                detection_source: "known_alias".to_string(),
+                needs_review: false,
                 region: "unknown".to_string(),
                 confidence,
                 match_confidence: confidence,
@@ -110,6 +113,14 @@ fn detect_mentions_in_text(
             });
         }
     }
+
+    mentions.extend(detect_candidate_mentions(
+        post_id,
+        text,
+        &normalized_text,
+        &known_aliases,
+        &mut seen_agents,
+    ));
 
     mentions
 }
@@ -196,10 +207,7 @@ fn confidence_for(agent: &AgentAliasConfig, normalized_alias: &str) -> f64 {
 }
 
 fn relevance_score(confidence: f64, normalized_text: &str) -> f64 {
-    let agent_context_terms = [
-        "agent", "agents", "coding", "code", "tools", "server", "skills",
-    ];
-    let has_agent_context = agent_context_terms
+    let has_agent_context = candidate_context_terms()
         .iter()
         .any(|term| contains_alias(normalized_text, term));
 
@@ -208,6 +216,181 @@ fn relevance_score(confidence: f64, normalized_text: &str) -> f64 {
     } else {
         confidence
     }
+}
+
+fn detect_candidate_mentions(
+    post_id: &str,
+    text: &str,
+    normalized_text: &str,
+    known_aliases: &HashSet<String>,
+    seen_agents: &mut HashSet<String>,
+) -> Vec<DetectedAgentMention> {
+    if !has_candidate_context(normalized_text) {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for candidate in extract_candidate_names(text) {
+        let normalized_candidate = normalize_text(&candidate);
+        if normalized_candidate.is_empty()
+            || is_candidate_stop_phrase(&normalized_candidate)
+            || known_aliases.contains(&normalized_candidate)
+            || seen_agents.iter().any(|agent| {
+                let normalized_agent = normalize_text(agent);
+                normalized_agent == normalized_candidate
+                    || normalized_candidate.starts_with(&format!("{normalized_agent} "))
+                    || normalized_candidate.ends_with(&format!(" {normalized_agent}"))
+            })
+        {
+            continue;
+        }
+
+        seen_agents.insert(candidate.clone());
+        candidates.push(DetectedAgentMention {
+            mention_id: stable_mention_id(post_id, &format!("candidate::{candidate}")),
+            post_id: post_id.to_string(),
+            agent_name: candidate.clone(),
+            agent_alias: candidate,
+            category: "unknown_candidate".to_string(),
+            detection_source: "candidate_pattern".to_string(),
+            needs_review: true,
+            region: "unknown".to_string(),
+            confidence: 0.62,
+            match_confidence: 0.62,
+            relevance_score: 0.66,
+            sentiment: "unknown".to_string(),
+            cost_signal: "none".to_string(),
+            source_snippet: source_snippet(text),
+        });
+    }
+
+    candidates
+}
+
+fn known_aliases(config: &AliasesConfig) -> HashSet<String> {
+    let mut aliases = HashSet::new();
+    for agent in &config.agents {
+        let canonical = normalize_text(&agent.canonical_name);
+        if !canonical.is_empty() {
+            aliases.insert(canonical);
+        }
+        for alias in &agent.aliases {
+            let normalized_alias = normalize_text(alias);
+            if !normalized_alias.is_empty() {
+                aliases.insert(normalized_alias);
+            }
+        }
+    }
+    aliases
+}
+
+fn has_candidate_context(normalized_text: &str) -> bool {
+    candidate_context_terms()
+        .iter()
+        .any(|term| contains_alias(normalized_text, term))
+}
+
+fn candidate_context_terms() -> [&'static str; 12] {
+    [
+        "ai",
+        "agent",
+        "agents",
+        "agentic",
+        "coding",
+        "code",
+        "tools",
+        "developer",
+        "workflow",
+        "workflows",
+        "server",
+        "skills",
+    ]
+}
+
+fn extract_candidate_names(text: &str) -> Vec<String> {
+    let tokens = text
+        .split_whitespace()
+        .map(clean_candidate_token)
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    let mut index = 0;
+
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if is_domain_like(token) {
+            candidates.push(token.to_string());
+            index += 1;
+            continue;
+        }
+
+        if !is_capitalized_candidate_token(token) {
+            index += 1;
+            continue;
+        }
+
+        let mut phrase = vec![token.to_string()];
+        let mut next = index + 1;
+        while next < tokens.len()
+            && phrase.len() < 3
+            && is_capitalized_candidate_token(tokens[next])
+        {
+            phrase.push(tokens[next].to_string());
+            next += 1;
+        }
+
+        candidates.push(phrase.join(" "));
+        index = next;
+    }
+
+    candidates
+}
+
+fn clean_candidate_token(token: &str) -> &str {
+    token.trim_matches(|character: char| {
+        !(character.is_alphanumeric() || character == '.' || character == '-' || character == '_')
+    })
+}
+
+fn is_domain_like(token: &str) -> bool {
+    let lowercase = token.to_lowercase();
+    lowercase.contains('.')
+        && lowercase.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '.' || character == '-'
+        })
+        && lowercase.split('.').all(|part| !part.is_empty())
+}
+
+fn is_capitalized_candidate_token(token: &str) -> bool {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    first.is_uppercase()
+        && token.chars().any(|character| character.is_alphabetic())
+        && token.chars().count() >= 3
+}
+
+fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
+    let stop_phrases = [
+        "ada",
+        "agent",
+        "ai",
+        "ai agent",
+        "agent trend radar",
+        "ai agent trend",
+        "ai coding",
+        "developer",
+        "model context protocol",
+        "testing",
+        "threads",
+        "tools",
+        "tools ai",
+        "trend radar",
+    ];
+
+    stop_phrases.contains(&normalized_candidate)
 }
 
 fn stable_mention_id(post_id: &str, agent_name: &str) -> String {
@@ -267,7 +450,18 @@ mod tests {
                 AgentAliasConfig {
                     canonical_name: "Ponytail".to_string(),
                     category: "skill_or_mode".to_string(),
-                    aliases: vec!["Ponytail".to_string(), "Ponytail mode".to_string()],
+                    aliases: vec![
+                        "Ponytail".to_string(),
+                        "Ponytail mode".to_string(),
+                        "ponytail.dev".to_string(),
+                    ],
+                    ambiguous: false,
+                    context_terms: Vec::new(),
+                },
+                AgentAliasConfig {
+                    canonical_name: "Astryx".to_string(),
+                    category: "coding_agent".to_string(),
+                    aliases: vec!["Astryx".to_string(), "astryx.ai".to_string()],
                     ambiguous: false,
                     context_terms: Vec::new(),
                 },
@@ -355,6 +549,48 @@ mod tests {
 
         assert_eq!(mentions[0].agent_name, "Ponytail");
         assert_eq!(mentions[0].category, "skill_or_mode");
+    }
+
+    #[test]
+    fn detects_ponytail_domain_skill() {
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "Ponytail.dev is useful for Claude Code workflow",
+            &test_config(),
+        );
+
+        assert_eq!(mentions[0].agent_name, "Ponytail");
+        assert_eq!(mentions[0].category, "skill_or_mode");
+        assert!(!mentions[0].needs_review);
+    }
+
+    #[test]
+    fn detects_astryx_known_agent() {
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "I tried Astryx for agentic workflow",
+            &test_config(),
+        );
+
+        assert!(mentions.iter().any(|mention| mention.agent_name == "Astryx"
+            && mention.detection_source == "known_alias"
+            && !mention.needs_review));
+    }
+
+    #[test]
+    fn detects_unknown_candidate_in_agent_context() {
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "NovaForge is showing up in AI agent discovery threads.",
+            &test_config(),
+        );
+
+        assert!(mentions
+            .iter()
+            .any(|mention| mention.agent_name == "NovaForge"
+                && mention.category == "unknown_candidate"
+                && mention.detection_source == "candidate_pattern"
+                && mention.needs_review));
     }
 
     #[test]

@@ -25,9 +25,7 @@ pub fn collect_threads_by_keyword(keyword: String) -> Result<ThreadsCollectionRe
         return Err("Keyword is required.".to_string());
     }
 
-    let access_token = read_access_token()?;
-    let response_json = search_keyword(&normalized_keyword, &access_token)?;
-    let posts = parse_keyword_search_response(&response_json)?;
+    let posts = search_threads_posts_by_keyword(&normalized_keyword)?;
     let fetched_count = posts.len();
     let saved_count = duckdb_service::save_threads_raw_posts(&posts)?;
 
@@ -43,6 +41,17 @@ pub fn collect_threads_by_keyword(keyword: String) -> Result<ThreadsCollectionRe
         saved_count,
         message,
     })
+}
+
+pub fn search_threads_posts_by_keyword(keyword: &str) -> Result<Vec<ThreadPostRaw>, String> {
+    let normalized_keyword = keyword.trim();
+    if normalized_keyword.is_empty() {
+        return Err("Keyword is required.".to_string());
+    }
+
+    let access_token = read_access_token()?;
+    let response_json = search_keyword(normalized_keyword, &access_token)?;
+    parse_keyword_search_response(&response_json)
 }
 
 pub fn import_sample_threads_posts() -> Result<SampleThreadsImportResult, String> {
@@ -75,6 +84,31 @@ pub fn import_sample_threads_posts() -> Result<SampleThreadsImportResult, String
         saved_count,
         message: format!("Imported {saved_count} of {loaded_count} sample Threads posts."),
     })
+}
+
+pub fn load_sample_threads_raw_posts() -> Result<Vec<ThreadPostRaw>, String> {
+    let sample_path = find_sample_threads_posts_path().ok_or_else(|| {
+        let attempted_paths = sample_threads_posts_path_candidates()
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!("Sample Threads posts file not found. Checked: {attempted_paths}")
+    })?;
+    let sample_text = fs::read_to_string(&sample_path).map_err(|error| {
+        format!(
+            "Failed to read sample Threads posts at {}: {error}",
+            sample_path.display()
+        )
+    })?;
+    let sample_posts = serde_json::from_str::<Vec<SampleThreadsPost>>(&sample_text)
+        .map_err(|error| format!("Sample Threads posts JSON is invalid: {error}"))?;
+
+    Ok(sample_posts
+        .into_iter()
+        .map(SampleThreadsPost::into_raw_post)
+        .collect())
 }
 
 fn find_sample_threads_posts_path() -> Option<PathBuf> {

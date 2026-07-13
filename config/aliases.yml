@@ -149,6 +149,7 @@ agents:
     aliases:
       - "Caveman"
       - "Cavemen"
+      - "caveman coding"
       - "Caveman mode"
       - "Cavemen mode"
   - canonical_name: "Ponytail"
@@ -156,6 +157,12 @@ agents:
     aliases:
       - "Ponytail"
       - "Ponytail mode"
+      - "ponytail.dev"
+  - canonical_name: "Astryx"
+    category: "coding_agent"
+    aliases:
+      - "Astryx"
+      - "astryx.ai"
   - canonical_name: "MCP"
     category: "mcp_or_connector"
     ambiguous: true
@@ -168,6 +175,10 @@ agents:
       - "cursor"
       - "protocol"
       - "registry"
+      - "developer"
+      - "workflow"
+      - "workflows"
+      - "adoption"
     aliases:
       - "MCP"
       - "MCP server"

@@ -67,6 +67,8 @@ pub struct DetectedAgentMention {
     pub agent_name: String,
     pub agent_alias: String,
     pub category: String,
+    pub detection_source: String,
+    pub needs_review: bool,
     pub region: String,
     pub confidence: f64,
     pub match_confidence: f64,
@@ -80,6 +82,8 @@ pub struct DetectedAgentMention {
 pub struct AgentMentionPreview {
     pub agent_name: String,
     pub category: String,
+    pub detection_source: String,
+    pub needs_review: bool,
     pub region: String,
     pub region_confidence: f64,
     pub region_reason: String,
@@ -142,6 +146,8 @@ impl From<&DetectedAgentMention> for AgentMentionPreview {
         Self {
             agent_name: mention.agent_name.clone(),
             category: mention.category.clone(),
+            detection_source: mention.detection_source.clone(),
+            needs_review: mention.needs_review,
             region: mention.region.clone(),
             region_confidence: 0.0,
             region_reason: "not classified".to_string(),

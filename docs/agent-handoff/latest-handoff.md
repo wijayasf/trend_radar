@@ -1,88 +1,94 @@
 # Latest Handoff
 
 Date: 2026-07-13
-Session: 021-checkpoint-commit
+Session: 023-discovery-crawler-mvp
 Agent: Codex
 
 ## Current State
 
-The MVP pipeline is ready for a local checkpoint commit before report export work:
+The app now has a discovery-first MVP flow:
 
-1. Import Sample Posts
+1. Run AI Agent Discovery Crawl
 2. Detect Agent Mentions
 3. Classify Regions
 4. Classify Sentiments
 5. Classify Cost Signals
 6. Aggregate Weekly Metrics
+7. Export Markdown Report
+8. Export CSV Metrics
 
-The full backend/service flow was validated in Session 020 through a targeted Rust test using a temporary DuckDB database under `/tmp`.
+The manual Threads keyword collector remains available for debugging one keyword, but discovery crawl is now the intended research entry point.
 
-## Completed This Session
+## Completed
 
-- Reviewed working tree status and diff summary.
-- Confirmed `src-tauri/data` has no runtime DuckDB files.
-- Smoke-launched the app with `npx tauri dev`.
-- Confirmed Vite and Tauri started successfully.
-- Observed no repeated watcher rebuild caused by DuckDB files under `src-tauri/data`.
-- Ran safe security grep checks for token/secret leak patterns.
-- Updated progress report and token usage log.
+- Added `config/discovery_keywords.yml`.
+- Added `discovery_crawler` service and `run_discovery_crawl` command.
+- Added UI section for AI Agent Discovery Crawler.
+- Added sample/mock fallback when real Threads search is unavailable.
+- Added in-crawl deduplication by Threads post ID.
+- Added safe diagnostic for ID-only keyword search responses.
+- Updated sample posts to discovery-style AI Agent posts.
+- Added aliases for Astryx, `astryx.ai`, `ponytail.dev`, and `caveman coding`.
+- Added candidate entity extraction with:
+  - `category = unknown_candidate`
+  - `detection_source = candidate_pattern`
+  - `needs_review = true`
+- Added known alias metadata:
+  - `detection_source = known_alias`
+  - `needs_review = false`
+- Added compatibility migration for `agent_mentions`.
+- Updated README and DuckDB schema docs.
+- Updated targeted full-flow test to start from discovery crawl.
 
-## UI Smoke Notes
+## Validated Counts
 
-- App launch succeeded.
-- Manual UI button click validation was not completed by automation because macOS Assistive Access is required for native click control.
-- Recommended manual click sequence remains:
-  1. Import Sample Posts
-  2. Detect Agent Mentions
-  3. Classify Regions
-  4. Classify Sentiments
-  5. Classify Cost Signals
-  6. Aggregate Weekly Metrics
+Sample/mock discovery full-flow:
 
-## Latest Validated Counts
+- Raw posts: `10`
+- Weekly report total mentions: `18`
+- Total agents detected: `11`
+- Regions covered: `global`, `indonesia`
+- Known entities confirmed:
+  - `Ponytail`
+  - `Caveman`
+  - `Astryx`
+  - `Claude Code`
+  - `Cursor`
+  - `MCP`
+  - `Cline`
+  - `Codex CLI`
+- Candidate entity confirmed:
+  - `NovaForge`
+- Sentiment:
+  - Positive: `11`
+  - Neutral: `7`
+  - Negative: `0`
+  - Mixed: `0`
+- Cost:
+  - Not mentioned: `13`
+  - Cost positive: `3`
+  - Cost negative / boros: `2`
+  - Cost mixed: `0`
 
-From the Session 020 targeted full-flow test:
+## Validation Commands
 
-- Raw posts count: `10`
-- Mentions found: `12`
-- Mentions saved: `12`
-- Region counts:
-  - Indonesia: `4`
-  - Global: `4`
-  - Unknown: `2`
-- Sentiment counts:
-  - Positive: `4`
-  - Neutral: `5`
-  - Negative: `1`
-  - Mixed: `2`
-- Cost signal counts:
-  - Not mentioned: `9`
-  - Cost positive: `1`
-  - Cost negative/boros: `1`
-  - Cost mixed: `1`
-- Weekly metrics rows: greater than `0`
-- Top Indonesia sample: `Claude Code`
-- Top Global sample: `Cline`
-
-## Security Notes
-
-- No token or `.env` contents were read or printed.
-- No real Threads token prefix literal found.
-- No application secret key literal found.
-- `THREADS_ACCESS_TOKEN` matches are placeholder/documentation/config key usage only.
-- `access_token` matches are documented request parameter usage and source code variable names.
+- `npm run build`: passed.
+- `cargo fmt --check`: passed.
+- `cargo check`: passed.
+- `cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
+- `KEEP_REPORT_EXPORTS=1 cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
+- `src-tauri/data`: no runtime database files.
 
 ## Known Warnings
 
 - Existing Rust warnings remain for placeholder trend models and placeholder Threads trait.
-- Threads real API still requires `threads_keyword_search` permission and was not changed.
-- `weekly_agent_metrics` is rebuilt by the aggregation command because it is derived data.
-- Author counts remain `0` until author data is collected.
-- Local disk has been tight in recent sessions.
+- Threads real API still requires `threads_keyword_search` permission.
+- ID-only keyword search detail fetch is not implemented yet.
+- Candidate extraction is rule-based and can produce false positives.
 
 ## Suggested Next Step
 
-Proceed to Report Export MVP. Prefer Markdown or CSV first, then DOCX/PDF after the report shape is stable.
+Build a candidate review workflow for `unknown_candidate` mentions, then add post detail fetch for ID-only Threads keyword search responses once the official permission/endpoint behavior is available.
 
 ## Token Usage
 

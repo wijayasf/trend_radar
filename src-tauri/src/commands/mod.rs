@@ -1,9 +1,11 @@
 pub mod config;
 pub mod costs;
 pub mod database;
+pub mod discovery;
 pub mod entities;
 pub mod health;
 pub mod regions;
+pub mod reports;
 pub mod sentiments;
 pub mod threads;
 pub mod weekly;

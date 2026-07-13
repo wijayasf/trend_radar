@@ -62,3 +62,11 @@ pub struct WeeklyAggregationResult {
     pub top_unknown: Vec<WeeklyAgentMetric>,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportExportResult {
+    pub file_path: String,
+    pub rows_exported: usize,
+    pub message: String,
+    pub preview: String,
+}

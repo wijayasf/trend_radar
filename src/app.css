@@ -140,6 +140,13 @@ h1 {
   letter-spacing: 0;
 }
 
+.panel-note {
+  margin: 8px 0 0;
+  color: #687478;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .collector-panel form {
   display: grid;
   gap: 8px;
@@ -158,18 +165,24 @@ h1 {
 }
 
 .collector-row input,
+.collector-row select,
 .collector-row button {
   min-height: 42px;
   border-radius: 6px;
   font: inherit;
 }
 
-.collector-row input {
+.collector-row input,
+.collector-row select {
   width: 100%;
   border: 1px solid rgba(24, 32, 36, 0.18);
   padding: 0 12px;
   background: #ffffff;
   color: #182024;
+}
+
+.discovery-row {
+  grid-template-columns: minmax(130px, 0.6fr) minmax(92px, 0.35fr) auto;
 }
 
 .collector-row button {
@@ -193,8 +206,16 @@ h1 {
   cursor: pointer;
 }
 
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .collector-row button:disabled,
 .collector-row input:disabled,
+.collector-row select:disabled,
 .detector-header button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -306,6 +327,33 @@ h1 {
   font-size: 0.9rem;
 }
 
+.export-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.export-preview-grid h3 {
+  margin: 0 0 8px;
+  color: #182024;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.export-preview-grid pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid rgba(24, 32, 36, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  color: #4e5a5f;
+  font: 0.82rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 640px) {
   .workspace {
     width: min(100% - 28px, 1120px);
@@ -318,6 +366,7 @@ h1 {
 
   .collector-panel,
   .collector-row,
+  .discovery-row,
   .detector-header,
   .mention-row {
     grid-template-columns: 1fr;
@@ -325,6 +374,10 @@ h1 {
 
   .detector-header {
     align-items: stretch;
+  }
+
+  .export-actions {
+    justify-content: stretch;
   }
 
   .collector-result {

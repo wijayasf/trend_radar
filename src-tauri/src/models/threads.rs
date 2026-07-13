@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct ThreadPostRaw {
@@ -23,6 +24,61 @@ pub struct SampleThreadsImportResult {
     pub loaded_count: usize,
     pub saved_count: usize,
     pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscoveryKeywordsConfig {
+    pub ai_agent_discovery: DiscoveryKeywordGroups,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscoveryKeywordGroups {
+    #[serde(default)]
+    pub global: Vec<String>,
+    #[serde(default)]
+    pub indonesia: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoveryCrawlResult {
+    pub seed_group: String,
+    pub mode: String,
+    pub seeds_processed: usize,
+    pub fetched_total: usize,
+    pub saved_total: usize,
+    pub duplicates_skipped: usize,
+    pub failed_seeds: usize,
+    pub errors: Vec<String>,
+    pub message: String,
+}
+
+impl DiscoveryKeywordGroups {
+    pub fn seeds_for_group(&self, group: &str) -> Result<Vec<String>, String> {
+        let mut seeds = Vec::new();
+        match group {
+            "all" => {
+                seeds.extend(self.global.clone());
+                seeds.extend(self.indonesia.clone());
+            }
+            "global" => seeds.extend(self.global.clone()),
+            "indonesia" => seeds.extend(self.indonesia.clone()),
+            other => {
+                return Err(format!(
+                    "Unsupported discovery seed group: {other}. Use all, global, or indonesia."
+                ));
+            }
+        }
+
+        let mut deduped = BTreeMap::new();
+        for seed in seeds {
+            let trimmed = seed.trim();
+            if !trimmed.is_empty() {
+                deduped.entry(trimmed.to_lowercase()).or_insert(seed);
+            }
+        }
+
+        Ok(deduped.into_values().collect())
+    }
 }
 
 #[derive(Debug, Deserialize)]

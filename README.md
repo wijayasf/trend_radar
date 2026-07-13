@@ -29,11 +29,15 @@ The application is designed as a local-first desktop app, using DuckDB for local
 
 - Local DuckDB storage.
 - Threads API integration.
+- AI Agent discovery crawler using broad seed keywords from `config/discovery_keywords.yml`.
 - Safe environment-based configuration.
 - Sample data import for local testing.
 - Entity detection for AI Agent-related tools and skills.
+- Candidate entity extraction for new or unknown tool names that need review.
 - Region classification for Indonesia, global, and unknown signals.
-- Foundation for future sentiment, cost signal, trend score, and weekly report generation.
+- Sentiment and cost/boros signal classification.
+- Weekly aggregation with trend score ranking.
+- Markdown and CSV weekly report export.
 
 ## Entity Categories
 
@@ -46,6 +50,7 @@ The app supports categorization of detected entities into groups such as:
 - MCP or connector
 - Registry or discovery source
 - App builder
+- Unknown candidate
 - Unknown
 
 ## Example Entities
@@ -60,6 +65,7 @@ Examples of supported entities include:
 - OpenCode
 - Caveman
 - Ponytail
+- Astryx
 - ExplainX
 - MCP
 - LangGraph
@@ -113,6 +119,24 @@ Check Rust backend:
 cd src-tauri
 cargo check
 ```
+
+## MVP Workflow
+
+Recommended local flow:
+
+```text
+Run AI Agent Discovery Crawl
+→ Detect Agent Mentions
+→ Classify Regions
+→ Classify Sentiments
+→ Classify Cost Signals
+→ Aggregate Weekly Metrics
+→ Export Markdown/CSV Report
+```
+
+The manual Threads keyword collector remains available for debugging a single keyword.
+Discovery crawl is the primary research flow because it searches broad AI Agent topics first,
+then entity detection extracts specific tools, agents, skills, MCP terms, and candidate names.
 
 ## Project Structure
 

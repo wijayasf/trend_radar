@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
     agent_name TEXT NOT NULL,
     agent_alias TEXT,
     category TEXT DEFAULT 'unknown',
+    detection_source TEXT DEFAULT 'known_alias',
+    needs_review BOOLEAN DEFAULT FALSE,
     region TEXT DEFAULT 'unknown',
     confidence DOUBLE DEFAULT 0.0,
     match_confidence DOUBLE DEFAULT 0.0,
@@ -72,6 +74,7 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
         'mcp_or_connector',
         'registry_or_discovery',
         'app_builder',
+        'unknown_candidate',
         'unknown'
     )),
     CHECK (region IN ('indonesia', 'global', 'unknown'))
@@ -79,6 +82,12 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'unknown';
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS detection_source TEXT DEFAULT 'known_alias';
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS needs_review BOOLEAN DEFAULT FALSE;
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS match_confidence DOUBLE DEFAULT 0.0;
@@ -226,6 +235,8 @@ INSERT OR REPLACE INTO agent_mentions (
     agent_name,
     agent_alias,
     category,
+    detection_source,
+    needs_review,
     region,
     confidence,
     match_confidence,
@@ -245,8 +256,102 @@ INSERT OR REPLACE INTO agent_mentions (
     ?9,
     ?10,
     ?11,
-    ?12
+    ?12,
+    ?13,
+    ?14
 );
+"#;
+
+const AGENT_MENTIONS_COMPATIBLE_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_mentions_compatible (
+    mention_id TEXT PRIMARY KEY,
+    post_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    agent_alias TEXT,
+    category TEXT DEFAULT 'unknown',
+    detection_source TEXT DEFAULT 'known_alias',
+    needs_review BOOLEAN DEFAULT FALSE,
+    region TEXT DEFAULT 'unknown',
+    confidence DOUBLE DEFAULT 0.0,
+    match_confidence DOUBLE DEFAULT 0.0,
+    relevance_score DOUBLE DEFAULT 0.0,
+    sentiment TEXT DEFAULT 'unknown',
+    sentiment_confidence DOUBLE DEFAULT 0.0,
+    sentiment_reason TEXT,
+    cost_signal TEXT DEFAULT 'none',
+    cost_confidence DOUBLE DEFAULT 0.0,
+    cost_reason TEXT,
+    source_snippet TEXT,
+    region_confidence DOUBLE DEFAULT 0.0,
+    region_reason TEXT,
+    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (post_id) REFERENCES threads_posts_raw(post_id),
+    CHECK (category IN (
+        'coding_agent',
+        'coding_assistant',
+        'generic_agent_framework',
+        'skill_or_mode',
+        'mcp_or_connector',
+        'registry_or_discovery',
+        'app_builder',
+        'unknown_candidate',
+        'unknown'
+    )),
+    CHECK (region IN ('indonesia', 'global', 'unknown'))
+);
+
+INSERT OR REPLACE INTO agent_mentions_compatible (
+    mention_id,
+    post_id,
+    agent_name,
+    agent_alias,
+    category,
+    detection_source,
+    needs_review,
+    region,
+    confidence,
+    match_confidence,
+    relevance_score,
+    sentiment,
+    sentiment_confidence,
+    sentiment_reason,
+    cost_signal,
+    cost_confidence,
+    cost_reason,
+    source_snippet,
+    region_confidence,
+    region_reason,
+    detected_at
+)
+SELECT
+    mention_id,
+    post_id,
+    agent_name,
+    agent_alias,
+    category,
+    COALESCE(detection_source, 'known_alias'),
+    COALESCE(needs_review, FALSE),
+    region,
+    confidence,
+    match_confidence,
+    relevance_score,
+    sentiment,
+    sentiment_confidence,
+    sentiment_reason,
+    cost_signal,
+    cost_confidence,
+    cost_reason,
+    source_snippet,
+    region_confidence,
+    region_reason,
+    detected_at
+FROM agent_mentions;
+
+DROP TABLE agent_mentions;
+ALTER TABLE agent_mentions_compatible RENAME TO agent_mentions;
+
+CREATE INDEX IF NOT EXISTS idx_agent_mentions_agent_region
+    ON agent_mentions(agent_name, region);
 "#;
 
 const THREADS_POST_REGION_UPDATE_SQL: &str = r#"
@@ -549,6 +654,8 @@ pub fn save_agent_mentions(mentions: &[DetectedAgentMention]) -> Result<usize, S
                     &mention.agent_name,
                     &mention.agent_alias,
                     &mention.category,
+                    &mention.detection_source,
+                    mention.needs_review,
                     &mention.region,
                     mention.confidence,
                     mention.match_confidence,
@@ -783,6 +890,8 @@ pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPrevi
             SELECT
                 agent_name,
                 category,
+                COALESCE(detection_source, 'known_alias'),
+                COALESCE(needs_review, FALSE),
                 region,
                 COALESCE(region_confidence, 0.0),
                 COALESCE(region_reason, ''),
@@ -806,17 +915,19 @@ pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPrevi
             Ok(AgentMentionPreview {
                 agent_name: row.get(0)?,
                 category: row.get(1)?,
-                region: row.get(2)?,
-                region_confidence: row.get(3)?,
-                region_reason: row.get(4)?,
-                sentiment: row.get(5)?,
-                sentiment_confidence: row.get(6)?,
-                sentiment_reason: row.get(7)?,
-                cost_signal: row.get(8)?,
-                cost_confidence: row.get(9)?,
-                cost_reason: row.get(10)?,
-                confidence: row.get(11)?,
-                source_snippet: row.get(12)?,
+                detection_source: row.get(2)?,
+                needs_review: row.get(3)?,
+                region: row.get(4)?,
+                region_confidence: row.get(5)?,
+                region_reason: row.get(6)?,
+                sentiment: row.get(7)?,
+                sentiment_confidence: row.get(8)?,
+                sentiment_reason: row.get(9)?,
+                cost_signal: row.get(10)?,
+                cost_confidence: row.get(11)?,
+                cost_reason: row.get(12)?,
+                confidence: row.get(13)?,
+                source_snippet: row.get(14)?,
             })
         })
         .map_err(|error| format!("DuckDB mention preview query failed: {error}"))?;
@@ -925,6 +1036,86 @@ pub fn load_weekly_agent_metrics_by_region(
     Ok(metrics)
 }
 
+pub fn load_weekly_agent_metrics(limit: usize) -> Result<Vec<WeeklyAgentMetric>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                CAST(week_start AS VARCHAR),
+                CAST(week_end AS VARCHAR),
+                region,
+                agent_name,
+                category,
+                mentions,
+                positive_count,
+                neutral_count,
+                negative_count,
+                mixed_count,
+                cost_not_mentioned_count,
+                cost_positive_count,
+                cost_negative_boros_count,
+                cost_mixed_count,
+                positive_pct,
+                negative_pct,
+                cost_negative_boros_pct,
+                trend_score
+            FROM weekly_agent_metrics
+            ORDER BY region ASC, trend_score DESC, mentions DESC, agent_name ASC
+            LIMIT ?1
+            "#,
+        )
+        .map_err(|error| {
+            format!("DuckDB weekly metrics export query preparation failed: {error}")
+        })?;
+
+    let rows = statement
+        .query_map(params![limit], |row| {
+            Ok(WeeklyAgentMetric {
+                rank: 0,
+                week_start: row.get(0)?,
+                week_end: row.get(1)?,
+                region: row.get(2)?,
+                agent_name: row.get(3)?,
+                category: row.get(4)?,
+                mentions: i64_to_usize(row.get(5)?)?,
+                positive_count: i64_to_usize(row.get(6)?)?,
+                neutral_count: i64_to_usize(row.get(7)?)?,
+                negative_count: i64_to_usize(row.get(8)?)?,
+                mixed_count: i64_to_usize(row.get(9)?)?,
+                cost_not_mentioned_count: i64_to_usize(row.get(10)?)?,
+                cost_positive_count: i64_to_usize(row.get(11)?)?,
+                cost_negative_boros_count: i64_to_usize(row.get(12)?)?,
+                cost_mixed_count: i64_to_usize(row.get(13)?)?,
+                positive_pct: row.get(14)?,
+                negative_pct: row.get(15)?,
+                cost_negative_boros_pct: row.get(16)?,
+                trend_score: row.get(17)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB weekly metrics export query failed: {error}"))?;
+
+    let mut metrics = Vec::new();
+    let mut current_region = String::new();
+    let mut current_rank = 0;
+
+    for row in rows {
+        let mut metric =
+            row.map_err(|error| format!("DuckDB weekly metrics export row read failed: {error}"))?;
+        if metric.region != current_region {
+            current_region = metric.region.clone();
+            current_rank = 1;
+        } else {
+            current_rank += 1;
+        }
+        metric.rank = current_rank;
+        metrics.push(metric);
+    }
+
+    Ok(metrics)
+}
+
 fn initialize_database_at(database_path: &Path) -> Result<(), String> {
     ensure_parent_directory(database_path)?;
     let connection = open_connection(database_path)?;
@@ -938,7 +1129,11 @@ fn i64_to_usize(value: i64) -> Result<usize, duckdb::Error> {
 fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))
+        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))?;
+
+    connection
+        .execute_batch(AGENT_MENTIONS_COMPATIBLE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB agent mentions compatibility migration failed: {error}"))
 }
 
 fn open_connection(database_path: &Path) -> Result<Connection, String> {

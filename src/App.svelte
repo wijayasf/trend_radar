@@ -11,6 +11,17 @@
   ];
 
   let databaseHealth = 'Checking local database...';
+  let discoveryStatus = 'Idle';
+  let discoverySeedGroup = 'all';
+  let discoveryMaxPerSeed = 10;
+  let discoverySeedsProcessed = 0;
+  let discoveryFetchedTotal = 0;
+  let discoverySavedTotal = 0;
+  let discoveryDuplicatesSkipped = 0;
+  let discoveryFailedSeeds = 0;
+  let discoveryMode = 'none';
+  let discoveryErrors: string[] = [];
+  let isRunningDiscovery = false;
   let keyword = 'AI Agent';
   let collectStatus = 'Idle';
   let fetchedCount = 0;
@@ -65,6 +76,14 @@
   let topGlobal: WeeklyAgentMetric[] = [];
   let topUnknown: WeeklyAgentMetric[] = [];
   let isAggregatingWeeklyMetrics = false;
+  let markdownExportStatus = 'Idle';
+  let csvExportStatus = 'Idle';
+  let markdownExportPath = '';
+  let csvExportPath = '';
+  let markdownExportPreview = '';
+  let csvExportPreview = '';
+  let isExportingMarkdown = false;
+  let isExportingCsv = false;
 
   type ThreadsCollectionResult = {
     keyword: string;
@@ -79,9 +98,23 @@
     message: string;
   };
 
+  type DiscoveryCrawlResult = {
+    seed_group: string;
+    mode: string;
+    seeds_processed: number;
+    fetched_total: number;
+    saved_total: number;
+    duplicates_skipped: number;
+    failed_seeds: number;
+    errors: string[];
+    message: string;
+  };
+
   type AgentMentionPreview = {
     agent_name: string;
     category: string;
+    detection_source: string;
+    needs_review: boolean;
     region: string;
     region_confidence: number;
     region_reason: string;
@@ -156,6 +189,13 @@
     top_global: WeeklyAgentMetric[];
     top_unknown: WeeklyAgentMetric[];
     message: string;
+  };
+
+  type ReportExportResult = {
+    file_path: string;
+    rows_exported: number;
+    message: string;
+    preview: string;
   };
 
   type RegionClassificationResult = {
@@ -264,6 +304,41 @@
 
   async function refreshRawPostsCount() {
     rawPostsCount = await invoke<number>('count_threads_raw_posts');
+  }
+
+  async function runDiscoveryCrawl() {
+    if (isRunningDiscovery) return;
+
+    isRunningDiscovery = true;
+    discoveryStatus = 'Running AI Agent discovery crawl...';
+    discoverySeedsProcessed = 0;
+    discoveryFetchedTotal = 0;
+    discoverySavedTotal = 0;
+    discoveryDuplicatesSkipped = 0;
+    discoveryFailedSeeds = 0;
+    discoveryMode = 'none';
+    discoveryErrors = [];
+
+    try {
+      const result = await invoke<DiscoveryCrawlResult>('run_discovery_crawl', {
+        regionSeedGroup: discoverySeedGroup,
+        maxPerSeed: discoveryMaxPerSeed,
+        dryRun: false,
+      });
+      discoverySeedsProcessed = result.seeds_processed;
+      discoveryFetchedTotal = result.fetched_total;
+      discoverySavedTotal = result.saved_total;
+      discoveryDuplicatesSkipped = result.duplicates_skipped;
+      discoveryFailedSeeds = result.failed_seeds;
+      discoveryMode = result.mode;
+      discoveryErrors = result.errors;
+      discoveryStatus = result.message;
+      await refreshRawPostsCount();
+    } catch (error) {
+      discoveryStatus = `error: ${String(error)}`;
+    } finally {
+      isRunningDiscovery = false;
+    }
   }
 
   function parseApiError(error: unknown) {
@@ -414,6 +489,46 @@
       isAggregatingWeeklyMetrics = false;
     }
   }
+
+  async function exportMarkdownReport() {
+    if (isExportingMarkdown) return;
+
+    isExportingMarkdown = true;
+    markdownExportStatus = 'Exporting Markdown report...';
+    markdownExportPath = '';
+    markdownExportPreview = '';
+
+    try {
+      const result = await invoke<ReportExportResult>('export_weekly_report_markdown');
+      markdownExportStatus = result.message;
+      markdownExportPath = result.file_path;
+      markdownExportPreview = result.preview;
+    } catch (error) {
+      markdownExportStatus = `error: ${String(error)}`;
+    } finally {
+      isExportingMarkdown = false;
+    }
+  }
+
+  async function exportCsvMetrics() {
+    if (isExportingCsv) return;
+
+    isExportingCsv = true;
+    csvExportStatus = 'Exporting CSV metrics...';
+    csvExportPath = '';
+    csvExportPreview = '';
+
+    try {
+      const result = await invoke<ReportExportResult>('export_weekly_metrics_csv');
+      csvExportStatus = result.message;
+      csvExportPath = result.file_path;
+      csvExportPreview = result.preview;
+    } catch (error) {
+      csvExportStatus = `error: ${String(error)}`;
+    } finally {
+      isExportingCsv = false;
+    }
+  }
 </script>
 
 <main class="app-shell">
@@ -446,6 +561,56 @@
         </article>
       {/each}
     </div>
+
+    <section class="collector-panel" aria-label="AI Agent discovery crawler">
+      <div>
+        <p class="panel-label">AI Agent discovery crawler</p>
+        <h2>Run broad topic discovery</h2>
+        <p class="panel-note">
+          Discovery crawl searches broad AI Agent topics first, then entity detection extracts
+          tool/agent names from collected posts.
+        </p>
+      </div>
+
+      <form on:submit|preventDefault={runDiscoveryCrawl}>
+        <label for="discovery-seed-group">Seed group</label>
+        <div class="collector-row discovery-row">
+          <select
+            id="discovery-seed-group"
+            bind:value={discoverySeedGroup}
+            disabled={isRunningDiscovery}
+          >
+            <option value="all">All</option>
+            <option value="indonesia">Indonesia</option>
+            <option value="global">Global</option>
+          </select>
+          <input
+            type="number"
+            min="1"
+            max="50"
+            bind:value={discoveryMaxPerSeed}
+            disabled={isRunningDiscovery}
+            aria-label="Max per seed"
+          />
+          <button type="submit" disabled={isRunningDiscovery}>
+            {isRunningDiscovery ? 'Running' : 'Run Discovery Crawl'}
+          </button>
+        </div>
+      </form>
+
+      <div class="collector-result" aria-live="polite">
+        <span>Status: {discoveryStatus}</span>
+        <span>Mode: {discoveryMode}</span>
+        <span>Seeds processed: {discoverySeedsProcessed}</span>
+        <span>Fetched total: {discoveryFetchedTotal}</span>
+        <span>Saved total: {discoverySavedTotal}</span>
+        <span>Duplicates skipped: {discoveryDuplicatesSkipped}</span>
+        <span>Failed seeds: {discoveryFailedSeeds}</span>
+        {#if discoveryErrors.length > 0}
+          <span>Diagnostics: {discoveryErrors.join(' | ')}</span>
+        {/if}
+      </div>
+    </section>
 
     <section class="collector-panel" aria-label="Threads keyword collector">
       <div>
@@ -513,6 +678,10 @@
               <div>
                 <strong>{mention.agent_name}</strong>
                 <span>{mention.category}</span>
+                <span>
+                  {mention.detection_source}
+                  {mention.needs_review ? ' / review' : ''}
+                </span>
                 <span>
                   {mention.region}
                   {mention.region_confidence > 0
@@ -652,6 +821,51 @@
           </div>
         {/if}
       </div>
+    </section>
+
+    <section class="detector-panel" aria-label="Report export">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">Report export</p>
+          <h2>Export Weekly Report</h2>
+        </div>
+        <div class="export-actions">
+          <button type="button" on:click={exportMarkdownReport} disabled={isExportingMarkdown}>
+            {isExportingMarkdown ? 'Exporting' : 'Export Markdown Report'}
+          </button>
+          <button type="button" on:click={exportCsvMetrics} disabled={isExportingCsv}>
+            {isExportingCsv ? 'Exporting' : 'Export CSV Metrics'}
+          </button>
+        </div>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Markdown: {markdownExportStatus}</span>
+        {#if markdownExportPath}
+          <span>Markdown path: {markdownExportPath}</span>
+        {/if}
+        <span>CSV: {csvExportStatus}</span>
+        {#if csvExportPath}
+          <span>CSV path: {csvExportPath}</span>
+        {/if}
+      </div>
+
+      {#if markdownExportPreview || csvExportPreview}
+        <div class="export-preview-grid">
+          {#if markdownExportPreview}
+            <div>
+              <h3>Markdown preview</h3>
+              <pre>{markdownExportPreview}</pre>
+            </div>
+          {/if}
+          {#if csvExportPreview}
+            <div>
+              <h3>CSV preview</h3>
+              <pre>{csvExportPreview}</pre>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </section>
   </section>
 </main>
