@@ -1,58 +1,55 @@
 # Latest Handoff
 
 Date: 2026-07-13
-Session: 030-ui-demo-polish
+Session: 031-loading-states
 Agent: Codex
 
 ## Current State
 
-The MVP pipeline remains intact and the desktop UI has been polished for a clearer guided demo flow.
+The guided demo UI now includes visible loading feedback for the full MVP workflow. Backend collector, classifier, schema, and report logic were not intentionally changed.
 
 ## Completed This Session
 
-- Added six visible workflow steps:
-  - Discovery
-  - Entity Detection
-  - Candidate Review
-  - Classification
-  - Weekly Metrics
-  - Export Report
-- Added step status badges for Not started, Ready, Running, Completed, Needs attention, and Error.
-- Added dashboard summary cards:
-  - Raw posts
-  - Mentions
-  - Pending candidates
-  - Approved decisions
-  - Weekly metrics rows
-  - Last export path
-- Added guided buttons:
-  - `Run Full Sample Demo`
-  - `Run Full Real Flow`
-- Added section explanations and friendlier UI messaging for common Threads/DuckDB states.
-- Updated README with guided demo notes.
+- Added spinner/loading labels for all primary UI actions:
+  - Discovery crawl
+  - Manual keyword collect
+  - Sample import
+  - Entity detection
+  - Candidate refresh/approve/ignore/reset
+  - Region, sentiment, and cost classification
+  - Weekly aggregation
+  - Markdown/CSV export
+  - Full sample demo
+  - Full real flow
+- Added full-flow progress text:
+  - `Running step 1 of 6: ...`
+- Disabled individual action buttons while full-flow runs.
+- Kept candidate review manual during full real flow.
+- Updated README and token/progress docs.
 
 ## Validation
 
-- `npx tauri dev`: launch-smoke passed; Vite started, Tauri compiled, and the desktop binary launched without startup errors.
 - `npm run build`: passed.
 - `cargo fmt --check`: passed.
 - `cargo check`: passed.
   - Existing Rust placeholder/dead-code warnings remain.
 - `cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
+- `git diff --check`: passed.
+- `npx tauri dev`: launch-smoke passed; Vite started, Tauri compiled, and the desktop binary launched without startup errors.
 - Security grep checks found no real token or app secret values in tracked files.
 
 ## Pending
 
 - Human click-through before demo:
-  1. Run Full Sample Demo
-  2. Confirm summary cards, step statuses, weekly metrics, and export controls behave as expected
-  3. Optionally run Full Real Flow if Threads tester posts are still searchable
+  - Run Full Sample Demo
+  - Confirm spinner/loading labels appear and clear after completion
+  - Confirm large actions are disabled while full flow runs
+- Do not push until explicitly requested.
 
 ## Risk Note
 
-- UI-only orchestration was changed; backend collector, classifier, schema, and report logic were not intentionally changed.
-- Full-flow buttons rely on the existing command statuses. If one command returns a friendly error without throwing, later steps may still run and surface their own status.
-- `Run Full Real Flow` does not auto-approve candidates or auto-export reports.
+- Full-flow button orchestration still calls existing commands sequentially.
+- If a command catches its own error and does not throw, later full-flow steps may continue; the related status panel should still show the friendly error.
 - Token and `.env` contents were not read or printed.
 
 ## Token Usage

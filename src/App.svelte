@@ -122,6 +122,7 @@
   let demoStatus = 'Idle';
   let isRunningFullSampleDemo = false;
   let isRunningFullRealFlow = false;
+  let fullFlowStep = '';
   let candidateReviewStatus = 'Idle';
   let candidateEntities: CandidateEntityReview[] = [];
   let pendingCandidateCount = 0;
@@ -132,6 +133,7 @@
   let ignoredDecisionCount = 0;
   let isLoadingCandidates = false;
   let activeCandidateAction = '';
+  let activeCandidateActionType = '';
 
   const candidateCategoryOptions = [
     'coding_agent',
@@ -429,6 +431,10 @@
     return status.toLowerCase().startsWith('error');
   }
 
+  function isFullFlowRunning() {
+    return isRunningFullSampleDemo || isRunningFullRealFlow;
+  }
+
   function friendlyError(error: unknown) {
     const raw = String(error);
     if (raw.includes('code=10') || raw.includes('Application does not have permission')) {
@@ -547,6 +553,7 @@
     if (!reviewedAs || !reviewedCategory) return;
 
     activeCandidateAction = candidate.candidate_name;
+    activeCandidateActionType = 'approve';
     candidateReviewStatus = `Approving ${candidate.candidate_name}...`;
 
     try {
@@ -562,6 +569,7 @@
       candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       activeCandidateAction = '';
+      activeCandidateActionType = '';
     }
   }
 
@@ -569,6 +577,7 @@
     if (activeCandidateAction) return;
 
     activeCandidateAction = candidate.candidate_name;
+    activeCandidateActionType = 'ignore';
     candidateReviewStatus = `Ignoring ${candidate.candidate_name}...`;
 
     try {
@@ -582,6 +591,7 @@
       candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       activeCandidateAction = '';
+      activeCandidateActionType = '';
     }
   }
 
@@ -589,6 +599,7 @@
     if (activeCandidateAction) return;
 
     activeCandidateAction = candidate.candidate_name;
+    activeCandidateActionType = 'reset';
     candidateReviewStatus = `Resetting ${candidate.candidate_name}...`;
 
     try {
@@ -601,6 +612,7 @@
       candidateReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
       activeCandidateAction = '';
+      activeCandidateActionType = '';
     }
   }
 
@@ -847,19 +859,26 @@
 
     isRunningFullSampleDemo = true;
     demoStatus = 'Running full sample demo...';
+    fullFlowStep = 'Running step 1 of 6: Importing Sample Posts';
 
     try {
       await importSamplePosts();
+      fullFlowStep = 'Running step 2 of 6: Detecting Agent Mentions';
       await detectAgentMentions();
+      fullFlowStep = 'Running step 3 of 6: Classifying Regions';
       await classifyRegions();
+      fullFlowStep = 'Running step 4 of 6: Classifying Sentiments';
       await classifySentiments();
+      fullFlowStep = 'Running step 5 of 6: Classifying Cost Signals';
       await classifyCostSignals();
+      fullFlowStep = 'Running step 6 of 6: Aggregating Weekly Metrics';
       await aggregateWeeklyMetrics();
       demoStatus = 'Sample demo completed. Review candidates manually, then export when ready.';
     } catch (error) {
       demoStatus = `error: ${friendlyError(error)}`;
     } finally {
       isRunningFullSampleDemo = false;
+      fullFlowStep = '';
     }
   }
 
@@ -868,19 +887,26 @@
 
     isRunningFullRealFlow = true;
     demoStatus = 'Running real discovery flow...';
+    fullFlowStep = 'Running step 1 of 6: Running Discovery Crawl';
 
     try {
       await runDiscoveryCrawl();
+      fullFlowStep = 'Running step 2 of 6: Detecting Agent Mentions';
       await detectAgentMentions();
+      fullFlowStep = 'Running step 3 of 6: Classifying Regions';
       await classifyRegions();
+      fullFlowStep = 'Running step 4 of 6: Classifying Sentiments';
       await classifySentiments();
+      fullFlowStep = 'Running step 5 of 6: Classifying Cost Signals';
       await classifyCostSignals();
+      fullFlowStep = 'Running step 6 of 6: Aggregating Weekly Metrics';
       await aggregateWeeklyMetrics();
       demoStatus = 'Real flow completed. Review pending candidates manually before relying on rankings.';
     } catch (error) {
       demoStatus = `error: ${friendlyError(error)}`;
     } finally {
       isRunningFullRealFlow = false;
+      fullFlowStep = '';
     }
   }
 </script>
@@ -897,13 +923,32 @@
     </div>
 
     <div class="demo-actions" aria-label="Demo actions">
-      <button type="button" on:click={runFullSampleDemo} disabled={isRunningFullSampleDemo || isRunningFullRealFlow}>
-        {isRunningFullSampleDemo ? 'Running Sample Demo' : 'Run Full Sample Demo'}
+      <button
+        type="button"
+        on:click={runFullSampleDemo}
+        disabled={isRunningFullSampleDemo || isRunningFullRealFlow}
+      >
+        {#if isRunningFullSampleDemo}
+          {@render LoadingLabel('Running Sample Demo...')}
+        {:else}
+          Run Full Sample Demo
+        {/if}
       </button>
-      <button type="button" on:click={runFullRealFlow} disabled={isRunningFullSampleDemo || isRunningFullRealFlow}>
-        {isRunningFullRealFlow ? 'Running Real Flow' : 'Run Full Real Flow'}
+      <button
+        type="button"
+        on:click={runFullRealFlow}
+        disabled={isRunningFullSampleDemo || isRunningFullRealFlow}
+      >
+        {#if isRunningFullRealFlow}
+          {@render LoadingLabel('Running Real Flow...')}
+        {:else}
+          Run Full Real Flow
+        {/if}
       </button>
       <span>{demoStatus}</span>
+      {#if fullFlowStep}
+        <span class="full-flow-step">{fullFlowStep}</span>
+      {/if}
     </div>
 
     <div class="status-grid" aria-label="Workflow status">
@@ -961,7 +1006,7 @@
           <select
             id="discovery-seed-group"
             bind:value={discoverySeedGroup}
-            disabled={isRunningDiscovery}
+            disabled={isRunningDiscovery || isFullFlowRunning()}
           >
             <option value="all">All</option>
             <option value="indonesia">Indonesia</option>
@@ -972,11 +1017,15 @@
             min="1"
             max="50"
             bind:value={discoveryMaxPerSeed}
-            disabled={isRunningDiscovery}
+            disabled={isRunningDiscovery || isFullFlowRunning()}
             aria-label="Max per seed"
           />
-          <button type="submit" disabled={isRunningDiscovery}>
-            {isRunningDiscovery ? 'Running' : 'Run Discovery Crawl'}
+          <button type="submit" disabled={isRunningDiscovery || isFullFlowRunning()}>
+            {#if isRunningDiscovery}
+              {@render LoadingLabel('Running...')}
+            {:else}
+              Run Discovery Crawl
+            {/if}
           </button>
         </div>
       </form>
@@ -1016,13 +1065,21 @@
             bind:value={keyword}
             placeholder="AI Agent"
             autocomplete="off"
-            disabled={isCollecting}
+            disabled={isCollecting || isFullFlowRunning()}
           />
-          <button type="submit" disabled={isCollecting || !keyword.trim()}>
-            {isCollecting ? 'Collecting' : 'Collect'}
+          <button type="submit" disabled={isCollecting || isFullFlowRunning() || !keyword.trim()}>
+            {#if isCollecting}
+              {@render LoadingLabel('Collecting...')}
+            {:else}
+              Collect
+            {/if}
           </button>
-          <button type="button" on:click={importSamplePosts} disabled={isImportingSamples}>
-            {isImportingSamples ? 'Importing' : 'Import Sample Posts'}
+          <button type="button" on:click={importSamplePosts} disabled={isImportingSamples || isFullFlowRunning()}>
+            {#if isImportingSamples}
+              {@render LoadingLabel('Importing...')}
+            {:else}
+              Import Sample Posts
+            {/if}
           </button>
         </div>
       </form>
@@ -1053,8 +1110,12 @@
             Find tools, agents, skills, MCP terms, and candidate names from collected posts.
           </p>
         </div>
-        <button type="button" on:click={detectAgentMentions} disabled={isDetecting}>
-          {isDetecting ? 'Detecting' : 'Detect Agent Mentions'}
+        <button type="button" on:click={detectAgentMentions} disabled={isDetecting || isFullFlowRunning()}>
+          {#if isDetecting}
+            {@render LoadingLabel('Detecting...')}
+          {:else}
+            Detect Agent Mentions
+          {/if}
         </button>
       </div>
 
@@ -1111,8 +1172,12 @@
             Approve, ignore, or normalize newly discovered candidate names before they affect trends.
           </p>
         </div>
-        <button type="button" on:click={loadCandidateEntities} disabled={isLoadingCandidates}>
-          {isLoadingCandidates ? 'Refreshing' : 'Refresh Candidates'}
+        <button type="button" on:click={loadCandidateEntities} disabled={isLoadingCandidates || isFullFlowRunning()}>
+          {#if isLoadingCandidates}
+            {@render LoadingLabel('Refreshing...')}
+          {:else}
+            Refresh Candidates
+          {/if}
         </button>
       </div>
 
@@ -1150,12 +1215,12 @@
                   bind:value={candidate.draft_reviewed_as}
                   placeholder="Canonical name"
                   aria-label={`Canonical name for ${candidate.candidate_name}`}
-                  disabled={activeCandidateAction === candidate.candidate_name}
+                  disabled={activeCandidateAction === candidate.candidate_name || isFullFlowRunning()}
                 />
                 <select
                   bind:value={candidate.draft_reviewed_category}
                   aria-label={`Category for ${candidate.candidate_name}`}
-                  disabled={activeCandidateAction === candidate.candidate_name}
+                  disabled={activeCandidateAction === candidate.candidate_name || isFullFlowRunning()}
                 >
                   {#each candidateCategoryOptions as category}
                     <option value={category}>{category}</option>
@@ -1165,7 +1230,7 @@
                   bind:value={candidate.draft_note}
                   placeholder="Review note"
                   aria-label={`Review note for ${candidate.candidate_name}`}
-                  disabled={activeCandidateAction === candidate.candidate_name}
+                  disabled={activeCandidateAction === candidate.candidate_name || isFullFlowRunning()}
                 />
               </div>
 
@@ -1173,23 +1238,35 @@
                 <button
                   type="button"
                   on:click={() => approveCandidate(candidate)}
-                  disabled={Boolean(activeCandidateAction)}
+                  disabled={Boolean(activeCandidateAction) || isFullFlowRunning()}
                 >
-                  Approve
+                  {#if activeCandidateAction === candidate.candidate_name && activeCandidateActionType === 'approve'}
+                    {@render LoadingLabel('Approving...')}
+                  {:else}
+                    Approve
+                  {/if}
                 </button>
                 <button
                   type="button"
                   on:click={() => ignoreCandidate(candidate)}
-                  disabled={Boolean(activeCandidateAction)}
+                  disabled={Boolean(activeCandidateAction) || isFullFlowRunning()}
                 >
-                  Ignore
+                  {#if activeCandidateAction === candidate.candidate_name && activeCandidateActionType === 'ignore'}
+                    {@render LoadingLabel('Ignoring...')}
+                  {:else}
+                    Ignore
+                  {/if}
                 </button>
                 <button
                   type="button"
                   on:click={() => resetCandidate(candidate)}
-                  disabled={Boolean(activeCandidateAction)}
+                  disabled={Boolean(activeCandidateAction) || isFullFlowRunning()}
                 >
-                  Reset
+                  {#if activeCandidateAction === candidate.candidate_name && activeCandidateActionType === 'reset'}
+                    {@render LoadingLabel('Resetting...')}
+                  {:else}
+                    Reset
+                  {/if}
                 </button>
               </div>
             </article>
@@ -1237,9 +1314,13 @@
                               reviewed_as: decision.normalized_name,
                               reviewed_category: decision.category,
                             })}
-                          disabled={Boolean(activeCandidateAction)}
+                          disabled={Boolean(activeCandidateAction) || isFullFlowRunning()}
                         >
-                          Reset
+                          {#if activeCandidateAction === decision.candidate_name && activeCandidateActionType === 'reset'}
+                            {@render LoadingLabel('Resetting...')}
+                          {:else}
+                            Reset
+                          {/if}
                         </button>
                       </td>
                     </tr>
@@ -1263,8 +1344,12 @@
             Label posts as Indonesia, global, or unknown for regional trend ranking.
           </p>
         </div>
-        <button type="button" on:click={classifyRegions} disabled={isClassifyingRegions}>
-          {isClassifyingRegions ? 'Classifying' : 'Classify Regions'}
+        <button type="button" on:click={classifyRegions} disabled={isClassifyingRegions || isFullFlowRunning()}>
+          {#if isClassifyingRegions}
+            {@render LoadingLabel('Classifying...')}
+          {:else}
+            Classify Regions
+          {/if}
         </button>
       </div>
 
@@ -1290,9 +1375,13 @@
         <button
           type="button"
           on:click={classifySentiments}
-          disabled={isClassifyingSentiments}
+          disabled={isClassifyingSentiments || isFullFlowRunning()}
         >
-          {isClassifyingSentiments ? 'Classifying' : 'Classify Sentiments'}
+          {#if isClassifyingSentiments}
+            {@render LoadingLabel('Classifying...')}
+          {:else}
+            Classify Sentiments
+          {/if}
         </button>
       </div>
 
@@ -1319,9 +1408,13 @@
         <button
           type="button"
           on:click={classifyCostSignals}
-          disabled={isClassifyingCostSignals}
+          disabled={isClassifyingCostSignals || isFullFlowRunning()}
         >
-          {isClassifyingCostSignals ? 'Classifying' : 'Classify Cost Signals'}
+          {#if isClassifyingCostSignals}
+            {@render LoadingLabel('Classifying...')}
+          {:else}
+            Classify Cost Signals
+          {/if}
         </button>
       </div>
 
@@ -1348,9 +1441,13 @@
         <button
           type="button"
           on:click={aggregateWeeklyMetrics}
-          disabled={isAggregatingWeeklyMetrics}
+          disabled={isAggregatingWeeklyMetrics || isFullFlowRunning()}
         >
-          {isAggregatingWeeklyMetrics ? 'Aggregating' : 'Aggregate Weekly Metrics'}
+          {#if isAggregatingWeeklyMetrics}
+            {@render LoadingLabel('Aggregating...')}
+          {:else}
+            Aggregate Weekly Metrics
+          {/if}
         </button>
       </div>
 
@@ -1390,11 +1487,19 @@
           </p>
         </div>
         <div class="export-actions">
-          <button type="button" on:click={exportMarkdownReport} disabled={isExportingMarkdown}>
-            {isExportingMarkdown ? 'Exporting' : 'Export Markdown Report'}
+          <button type="button" on:click={exportMarkdownReport} disabled={isExportingMarkdown || isFullFlowRunning()}>
+            {#if isExportingMarkdown}
+              {@render LoadingLabel('Exporting...')}
+            {:else}
+              Export Markdown Report
+            {/if}
           </button>
-          <button type="button" on:click={exportCsvMetrics} disabled={isExportingCsv}>
-            {isExportingCsv ? 'Exporting' : 'Export CSV Metrics'}
+          <button type="button" on:click={exportCsvMetrics} disabled={isExportingCsv || isFullFlowRunning()}>
+            {#if isExportingCsv}
+              {@render LoadingLabel('Exporting...')}
+            {:else}
+              Export CSV Metrics
+            {/if}
           </button>
         </div>
       </div>
@@ -1429,6 +1534,13 @@
     </section>
   </section>
 </main>
+
+{#snippet LoadingLabel(label: string)}
+  <span class="button-loading">
+    <span class="loading-spinner" aria-hidden="true"></span>
+    {label}
+  </span>
+{/snippet}
 
 {#snippet MetricTable(metrics: WeeklyAgentMetric[])}
   {#if metrics.length > 0}

@@ -49,8 +49,8 @@ Polish the AI Agent Trend Radar desktop UI so the MVP pipeline is easier to demo
   - Existing Rust placeholder/dead-code warnings remain.
 - `cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
 - Security grep checks:
-  - No `THAAP` matches.
-  - No `app_secret` matches.
+  - No Threads token prefix matches.
+  - No app secret key matches.
   - `THREADS_ACCESS_TOKEN` matches are placeholder/config key references only.
   - `access_token` matches are code variable/documentation references only.
 

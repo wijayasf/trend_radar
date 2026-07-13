@@ -148,6 +148,7 @@ The desktop UI includes guided demo controls:
 - `Run Full Real Flow` runs discovery against Threads, then detection, classification, and weekly metrics.
 
 Candidate review remains manual so new or unknown entities are not approved automatically.
+Long-running actions show disabled buttons, loading labels, and a compact spinner so demo state is visible while the local pipeline runs.
 
 ## Project Structure
 
