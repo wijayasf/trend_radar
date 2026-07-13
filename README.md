@@ -30,6 +30,7 @@ The application is designed as a local-first desktop app, using DuckDB for local
 - Local DuckDB storage.
 - Threads API integration.
 - AI Agent discovery crawler using broad seed keywords from `config/discovery_keywords.yml`.
+- Crawl diagnostics with run summary, seed-level status, bounded pagination, and single-seed testing.
 - Safe environment-based configuration.
 - Sample data import for local testing.
 - Entity detection for AI Agent-related tools and skills.

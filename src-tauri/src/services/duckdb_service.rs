@@ -10,7 +10,7 @@ use crate::models::entities::{
     CostClassification, DetectedAgentMention, EntityReviewDecision, RawPostForDetection,
     RegionClassification, SentimentClassification,
 };
-use crate::models::threads::ThreadPostRaw;
+use crate::models::threads::{DiscoveryCrawlResult, ThreadPostRaw};
 use crate::models::trend::WeeklyAgentMetric;
 use crate::utils::config;
 
@@ -48,6 +48,36 @@ ALTER TABLE threads_posts_raw
 
 ALTER TABLE threads_posts_raw
     ADD COLUMN IF NOT EXISTS region_reason TEXT;
+
+CREATE TABLE IF NOT EXISTS crawl_runs (
+    id TEXT PRIMARY KEY,
+    mode TEXT,
+    seed_group TEXT,
+    max_per_seed BIGINT DEFAULT 0,
+    seeds_processed BIGINT DEFAULT 0,
+    fetched_total BIGINT DEFAULT 0,
+    saved_total BIGINT DEFAULT 0,
+    duplicates_skipped BIGINT DEFAULT 0,
+    zero_result_seeds BIGINT DEFAULT 0,
+    failed_seeds BIGINT DEFAULT 0,
+    detail_fetched_total BIGINT DEFAULT 0,
+    detail_failed_total BIGINT DEFAULT 0,
+    text_missing_total BIGINT DEFAULT 0,
+    started_at TEXT,
+    finished_at TEXT,
+    duration_ms BIGINT DEFAULT 0,
+    status TEXT,
+    error_summary TEXT
+);
+
+ALTER TABLE crawl_runs
+    ADD COLUMN IF NOT EXISTS max_per_seed BIGINT DEFAULT 0;
+
+ALTER TABLE crawl_runs
+    ADD COLUMN IF NOT EXISTS zero_result_seeds BIGINT DEFAULT 0;
+
+ALTER TABLE crawl_runs
+    ADD COLUMN IF NOT EXISTS duration_ms BIGINT DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS agent_mentions (
     mention_id TEXT PRIMARY KEY,
@@ -293,6 +323,48 @@ INSERT OR REPLACE INTO threads_posts_raw (
     0,
     TRY_CAST(?8 AS TIMESTAMP),
     ?9
+);
+"#;
+
+const CRAWL_RUN_INSERT_SQL: &str = r#"
+INSERT OR REPLACE INTO crawl_runs (
+    id,
+    mode,
+    seed_group,
+    max_per_seed,
+    seeds_processed,
+    fetched_total,
+    saved_total,
+    duplicates_skipped,
+    zero_result_seeds,
+    failed_seeds,
+    detail_fetched_total,
+    detail_failed_total,
+    text_missing_total,
+    started_at,
+    finished_at,
+    duration_ms,
+    status,
+    error_summary
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6,
+    ?7,
+    ?8,
+    ?9,
+    ?10,
+    ?11,
+    ?12,
+    ?13,
+    ?14,
+    ?15,
+    ?16,
+    ?17,
+    ?18
 );
 "#;
 
@@ -592,6 +664,49 @@ pub fn count_threads_raw_posts() -> Result<usize, String> {
         .map_err(|error| format!("DuckDB raw post count query failed: {error}"))?;
 
     usize::try_from(count).map_err(|error| format!("DuckDB raw post count is invalid: {error}"))
+}
+
+pub fn save_crawl_run(result: &DiscoveryCrawlResult) -> Result<usize, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let status = if result.failed_seeds > 0 && result.saved_total == 0 {
+        "needs_attention"
+    } else if result.failed_seeds > 0 || result.zero_result_seeds > 0 {
+        "completed_with_diagnostics"
+    } else {
+        "completed"
+    };
+    let error_summary = if result.last_error_summary.trim().is_empty() {
+        result.errors.join(" | ")
+    } else {
+        result.last_error_summary.clone()
+    };
+
+    connection
+        .execute(
+            CRAWL_RUN_INSERT_SQL,
+            params![
+                &result.run_id,
+                &result.mode,
+                &result.seed_group,
+                result.max_per_seed as i64,
+                result.seeds_processed as i64,
+                result.fetched_total as i64,
+                result.saved_total as i64,
+                result.duplicates_skipped as i64,
+                result.zero_result_seeds as i64,
+                result.failed_seeds as i64,
+                result.detail_fetched_total as i64,
+                result.detail_failed_total as i64,
+                result.text_missing_total as i64,
+                &result.started_at,
+                &result.finished_at,
+                result.duration_ms as i64,
+                status,
+                &error_summary,
+            ],
+        )
+        .map_err(|error| format!("DuckDB crawl run insert failed: {error}"))
 }
 
 pub fn load_raw_posts_for_detection() -> Result<Vec<RawPostForDetection>, String> {

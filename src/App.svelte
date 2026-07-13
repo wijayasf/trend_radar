@@ -55,7 +55,20 @@
   let discoveryDuplicatesSkipped = 0;
   let discoveryFailedSeeds = 0;
   let discoveryMode = 'none';
+  let discoveryRunId = 'none';
+  let discoveryStartedAt = 'none';
+  let discoveryFinishedAt = 'none';
+  let discoveryDurationMs = 0;
+  let discoveryZeroResultSeeds = 0;
+  let discoveryPermissionLimitedHint = false;
+  let discoveryLastSuccessfulSeed = 'none';
+  let discoveryLastErrorSummary = 'none';
   let discoveryErrors: string[] = [];
+  let discoverySeedResults: DiscoverySeedDiagnostics[] = [];
+  let discoverySeedTestKeyword = 'AI Agent';
+  let discoverySeedTestStatus = 'Idle';
+  let discoverySeedTestResult: DiscoverySeedTestResult | null = null;
+  let isTestingDiscoverySeed = false;
   let isRunningDiscovery = false;
   let keyword = 'AI Agent';
   let collectStatus = 'Idle';
@@ -168,8 +181,13 @@
   };
 
   type DiscoveryCrawlResult = {
+    run_id: string;
     seed_group: string;
+    max_per_seed: number;
     mode: string;
+    started_at: string;
+    finished_at: string;
+    duration_ms: number;
     seeds_processed: number;
     fetched_total: number;
     detail_fetched_total: number;
@@ -177,10 +195,40 @@
     text_missing_total: number;
     saved_total: number;
     duplicates_skipped: number;
+    zero_result_seeds: number;
     failed_seeds: number;
     id_only_results_count: number;
+    permission_limited_hint: boolean;
+    last_successful_seed: string;
+    last_error_summary: string;
+    seed_results: DiscoverySeedDiagnostics[];
     errors: string[];
     message: string;
+  };
+
+  type DiscoverySeedDiagnostics = {
+    seed_keyword: string;
+    region_group: string;
+    search_status: string;
+    fetched_count: number;
+    saved_count: number;
+    duplicate_count: number;
+    detail_failed_count: number;
+    text_missing_count: number;
+    pages_fetched: number;
+    pagination_stopped_reason: string;
+    error_code: string;
+    error_message_safe: string;
+  };
+
+  type DiscoverySeedTestResult = {
+    seed_keyword: string;
+    status: string;
+    fetched_count: number;
+    detail_fetched_count: number;
+    text_available_count: number;
+    sample_text_snippet: string;
+    error_summary: string;
   };
 
   type AgentMentionPreview = {
@@ -630,8 +678,17 @@
     discoverySavedTotal = 0;
     discoveryDuplicatesSkipped = 0;
     discoveryFailedSeeds = 0;
+    discoveryZeroResultSeeds = 0;
+    discoveryPermissionLimitedHint = false;
+    discoveryLastSuccessfulSeed = 'none';
+    discoveryLastErrorSummary = 'none';
     discoveryMode = 'none';
+    discoveryRunId = 'none';
+    discoveryStartedAt = 'none';
+    discoveryFinishedAt = 'none';
+    discoveryDurationMs = 0;
     discoveryErrors = [];
+    discoverySeedResults = [];
 
     try {
       const result = await invoke<DiscoveryCrawlResult>('run_discovery_crawl', {
@@ -648,10 +705,21 @@
       discoverySavedTotal = result.saved_total;
       discoveryDuplicatesSkipped = result.duplicates_skipped;
       discoveryFailedSeeds = result.failed_seeds;
+      discoveryZeroResultSeeds = result.zero_result_seeds;
+      discoveryPermissionLimitedHint = result.permission_limited_hint;
+      discoveryLastSuccessfulSeed = result.last_successful_seed || 'none';
+      discoveryLastErrorSummary = result.last_error_summary || 'none';
       discoveryMode = result.mode;
+      discoveryRunId = result.run_id;
+      discoveryStartedAt = result.started_at;
+      discoveryFinishedAt = result.finished_at;
+      discoveryDurationMs = result.duration_ms;
+      discoverySeedResults = result.seed_results;
       discoveryErrors = result.errors;
       discoveryStatus =
-        result.fetched_total === 0
+        result.permission_limited_hint
+          ? `${result.message} Crawler may be limited to authenticated user posts until threads_keyword_search is approved for public search.`
+          : result.fetched_total === 0
           ? 'Discovery search completed, but no posts were returned. Tester/public search scope or seed keywords may need adjustment.'
           : result.text_missing_total > 0
             ? `${result.message} ${result.text_missing_total} posts had no text available after detail fetch.`
@@ -661,6 +729,30 @@
       discoveryStatus = `error: ${friendlyError(error)}`;
     } finally {
       isRunningDiscovery = false;
+    }
+  }
+
+  async function testDiscoverySeed() {
+    const keyword = discoverySeedTestKeyword.trim();
+    if (!keyword || isTestingDiscoverySeed || isFullFlowRunning()) return;
+
+    isTestingDiscoverySeed = true;
+    discoverySeedTestStatus = `Testing seed "${keyword}"...`;
+    discoverySeedTestResult = null;
+
+    try {
+      const result = await invoke<DiscoverySeedTestResult>('test_discovery_seed', { keyword });
+      discoverySeedTestResult = result;
+      discoverySeedTestStatus =
+        result.status === 'zero_result'
+          ? 'Keyword search succeeded but no posts were returned for this seed.'
+          : result.status === 'permission_error'
+            ? 'Token is valid, but keyword search is not authorized. Check token scope and app approval.'
+            : `Seed test ${result.status}.`;
+    } catch (error) {
+      discoverySeedTestStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isTestingDiscoverySeed = false;
     }
   }
 
@@ -1031,8 +1123,12 @@
       </form>
 
       <div class="collector-result" aria-live="polite">
+        <span>Run ID: {discoveryRunId}</span>
         <span>Status: {discoveryStatus}</span>
         <span>Mode: {discoveryMode}</span>
+        <span>Started: {discoveryStartedAt}</span>
+        <span>Finished: {discoveryFinishedAt}</span>
+        <span>Duration: {discoveryDurationMs} ms</span>
         <span>Seeds processed: {discoverySeedsProcessed}</span>
         <span>Fetched total: {discoveryFetchedTotal}</span>
         <span>ID-only results: {discoveryIdOnlyResultsCount}</span>
@@ -1041,11 +1137,94 @@
         <span>Text missing: {discoveryTextMissingTotal}</span>
         <span>Saved total: {discoverySavedTotal}</span>
         <span>Duplicates skipped: {discoveryDuplicatesSkipped}</span>
+        <span>Zero-result seeds: {discoveryZeroResultSeeds}</span>
         <span>Failed seeds: {discoveryFailedSeeds}</span>
+        <span>Last successful seed: {discoveryLastSuccessfulSeed}</span>
+        <span>Last error: {discoveryLastErrorSummary}</span>
+        <span>Permission limited hint: {discoveryPermissionLimitedHint ? 'yes' : 'no'}</span>
+        {#if discoveryPermissionLimitedHint}
+          <span>
+            Crawler may be limited to authenticated user posts until threads_keyword_search is
+            approved for public search.
+          </span>
+        {/if}
         {#if discoveryErrors.length > 0}
           <span>Diagnostics: {discoveryErrors.join(' | ')}</span>
         {/if}
       </div>
+
+      <form on:submit|preventDefault={testDiscoverySeed}>
+        <label for="discovery-seed-test">Single seed test</label>
+        <div class="collector-row">
+          <input
+            id="discovery-seed-test"
+            bind:value={discoverySeedTestKeyword}
+            placeholder="AI Agent"
+            autocomplete="off"
+            disabled={isTestingDiscoverySeed || isFullFlowRunning()}
+          />
+          <button
+            type="submit"
+            disabled={isTestingDiscoverySeed || isFullFlowRunning() || !discoverySeedTestKeyword.trim()}
+          >
+            {#if isTestingDiscoverySeed}
+              {@render LoadingLabel('Testing...')}
+            {:else}
+              Test Seed
+            {/if}
+          </button>
+        </div>
+      </form>
+
+      <div class="collector-result" aria-live="polite">
+        <span>Seed test: {discoverySeedTestStatus}</span>
+        {#if discoverySeedTestResult}
+          <span>Fetched: {discoverySeedTestResult.fetched_count}</span>
+          <span>Detail fetched: {discoverySeedTestResult.detail_fetched_count}</span>
+          <span>Text available: {discoverySeedTestResult.text_available_count}</span>
+          {#if discoverySeedTestResult.sample_text_snippet}
+            <span>Sample text: {discoverySeedTestResult.sample_text_snippet}</span>
+          {/if}
+          {#if discoverySeedTestResult.error_summary}
+            <span>Error summary: {discoverySeedTestResult.error_summary}</span>
+          {/if}
+        {/if}
+      </div>
+
+      {#if discoverySeedResults.length > 0}
+        <div class="metrics-table-wrap">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th>Seed</th>
+                <th>Status</th>
+                <th>Fetched</th>
+                <th>Saved</th>
+                <th>Duplicates</th>
+                <th>Detail Failed</th>
+                <th>Pages</th>
+                <th>Stop Reason</th>
+                <th>Error Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each discoverySeedResults as seed}
+                <tr>
+                  <td>{seed.seed_keyword}</td>
+                  <td>{seed.search_status}</td>
+                  <td>{seed.fetched_count}</td>
+                  <td>{seed.saved_count}</td>
+                  <td>{seed.duplicate_count}</td>
+                  <td>{seed.detail_failed_count}</td>
+                  <td>{seed.pages_fetched}</td>
+                  <td>{seed.pagination_stopped_reason}</td>
+                  <td>{seed.error_message_safe || '-'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     </section>
 
     <section class="collector-panel" aria-label="Threads keyword collector">

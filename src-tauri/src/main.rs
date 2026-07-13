@@ -18,6 +18,7 @@ fn main() {
             commands::candidates::list_entity_review_decisions,
             commands::candidates::reset_candidate_review,
             commands::discovery::run_discovery_crawl,
+            commands::discovery::test_discovery_seed,
             commands::threads::collect_threads_by_keyword,
             commands::threads::import_sample_threads_posts,
             commands::entities::detect_agent_mentions,
@@ -102,10 +103,26 @@ mod tests {
         assert_eq!(discovery_result.detail_failed_total, 0);
         assert_eq!(discovery_result.saved_total, 5);
         assert!(discovery_result.duplicates_skipped > 0);
+        assert!(!discovery_result.run_id.is_empty());
+        assert!(!discovery_result.started_at.is_empty());
+        assert!(!discovery_result.finished_at.is_empty());
+        assert_eq!(discovery_result.max_per_seed, 10);
+        assert!(!discovery_result.seed_results.is_empty());
+        assert!(discovery_result
+            .seed_results
+            .iter()
+            .any(|seed| seed.search_status == "success"));
         assert_eq!(
             duckdb_service::count_threads_raw_posts().expect("raw post count should be readable"),
             5
         );
+
+        let seed_test = discovery_crawler::test_discovery_seed("Ponytail".to_string())
+            .expect("single seed test should resolve mock detail");
+        assert_eq!(seed_test.status, "success");
+        assert!(seed_test.fetched_count > 0);
+        assert!(seed_test.text_available_count > 0);
+        assert!(seed_test.sample_text_snippet.contains("Ponytail"));
 
         let entity_result =
             entity_detector::detect_agent_mentions().expect("entity detection should succeed");

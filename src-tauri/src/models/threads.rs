@@ -44,8 +44,13 @@ pub struct DiscoveryKeywordGroups {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DiscoveryCrawlResult {
+    pub run_id: String,
     pub seed_group: String,
+    pub max_per_seed: usize,
     pub mode: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub duration_ms: u128,
     pub seeds_processed: usize,
     pub fetched_total: usize,
     pub detail_fetched_total: usize,
@@ -53,10 +58,42 @@ pub struct DiscoveryCrawlResult {
     pub text_missing_total: usize,
     pub saved_total: usize,
     pub duplicates_skipped: usize,
+    pub zero_result_seeds: usize,
     pub failed_seeds: usize,
     pub id_only_results_count: usize,
+    pub permission_limited_hint: bool,
+    pub last_successful_seed: String,
+    pub last_error_summary: String,
+    pub seed_results: Vec<DiscoverySeedResult>,
     pub errors: Vec<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoverySeedResult {
+    pub seed_keyword: String,
+    pub region_group: String,
+    pub search_status: String,
+    pub fetched_count: usize,
+    pub saved_count: usize,
+    pub duplicate_count: usize,
+    pub detail_failed_count: usize,
+    pub text_missing_count: usize,
+    pub pages_fetched: usize,
+    pub pagination_stopped_reason: String,
+    pub error_code: String,
+    pub error_message_safe: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoverySeedTestResult {
+    pub seed_keyword: String,
+    pub status: String,
+    pub fetched_count: usize,
+    pub detail_fetched_count: usize,
+    pub text_available_count: usize,
+    pub sample_text_snippet: String,
+    pub error_summary: String,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +103,8 @@ pub struct ThreadsSearchResult {
     pub id_only_results_count: usize,
     pub detail_fetched_total: usize,
     pub detail_failed_total: usize,
+    pub pages_fetched: usize,
+    pub pagination_stopped_reason: String,
     pub errors: Vec<String>,
 }
 

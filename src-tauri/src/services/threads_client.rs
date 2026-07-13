@@ -20,6 +20,8 @@ const THREADS_DETAIL_ENDPOINT_BASE: &str = "https://graph.threads.net/v1.0";
 const THREADS_DETAIL_FIELDS: &str = "id,text,media_type,permalink,timestamp,username,owner";
 const SAMPLE_THREADS_POSTS_PATH: &str = "data/sample_threads_posts.json";
 const PERMISSION_ERROR_MESSAGE: &str = "Threads keyword search permission missing. Add threads_keyword_search in Meta Developer Permissions and regenerate token.";
+const DEFAULT_KEYWORD_SEARCH_LIMIT: usize = 25;
+const DEFAULT_MAX_PAGES_PER_SEED: usize = 2;
 
 pub fn collect_threads_by_keyword(keyword: String) -> Result<ThreadsCollectionResult, String> {
     let normalized_keyword = keyword.trim().to_string();
@@ -46,10 +48,24 @@ pub fn collect_threads_by_keyword(keyword: String) -> Result<ThreadsCollectionRe
 }
 
 pub fn search_threads_posts_by_keyword(keyword: &str) -> Result<ThreadsSearchResult, String> {
+    search_threads_posts_by_keyword_limited(
+        keyword,
+        DEFAULT_KEYWORD_SEARCH_LIMIT,
+        DEFAULT_MAX_PAGES_PER_SEED,
+    )
+}
+
+pub fn search_threads_posts_by_keyword_limited(
+    keyword: &str,
+    max_posts: usize,
+    max_pages_per_seed: usize,
+) -> Result<ThreadsSearchResult, String> {
     let normalized_keyword = keyword.trim();
     if normalized_keyword.is_empty() {
         return Err("Keyword is required.".to_string());
     }
+    let max_posts = max_posts.max(1);
+    let max_pages_per_seed = max_pages_per_seed.max(1);
 
     #[cfg(test)]
     if mock_id_only_detail_enabled() {
@@ -57,9 +73,48 @@ pub fn search_threads_posts_by_keyword(keyword: &str) -> Result<ThreadsSearchRes
     }
 
     let access_token = read_access_token()?;
-    let response_json = search_keyword(normalized_keyword, &access_token)?;
-    let posts = parse_keyword_search_response(&response_json)?;
-    resolve_id_only_posts(posts, &access_token, "real_threads")
+    let client = threads_http_client()?;
+    let mut next_url = None;
+    let mut seen_next_urls = std::collections::HashSet::new();
+    let mut pages_fetched = 0;
+    let mut posts = Vec::new();
+
+    let pagination_stopped_reason = loop {
+        if pages_fetched >= max_pages_per_seed {
+            break "max_pages_per_seed_reached".to_string();
+        }
+
+        let response_json = search_keyword_page(
+            &client,
+            normalized_keyword,
+            &access_token,
+            next_url.as_deref(),
+        )?;
+        pages_fetched += 1;
+        posts.extend(parse_keyword_search_response(&response_json)?);
+
+        if posts.len() >= max_posts {
+            posts.truncate(max_posts);
+            break "max_per_seed_reached".to_string();
+        }
+
+        match paging_next_url(&response_json) {
+            Some(next) => {
+                if !seen_next_urls.insert(next.clone()) {
+                    break "repeated_cursor".to_string();
+                }
+                next_url = Some(next);
+            }
+            None => {
+                break "no_next_page".to_string();
+            }
+        }
+    };
+
+    let mut result = resolve_id_only_posts(posts, &access_token, "real_threads")?;
+    result.pages_fetched = pages_fetched;
+    result.pagination_stopped_reason = pagination_stopped_reason;
+    Ok(result)
 }
 
 pub fn fetch_thread_post_detail(post_id: &str) -> Result<ThreadPostRaw, String> {
@@ -165,20 +220,31 @@ fn read_access_token() -> Result<String, String> {
         })
 }
 
-fn search_keyword(keyword: &str, access_token: &str) -> Result<Value, String> {
-    let client = Client::builder()
+fn threads_http_client() -> Result<Client, String> {
+    Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
-        .map_err(|error| format!("Threads HTTP client initialization failed: {error}"))?;
+        .map_err(|error| format!("Threads HTTP client initialization failed: {error}"))
+}
 
-    let response = client
-        .get(THREADS_KEYWORD_SEARCH_ENDPOINT)
-        .bearer_auth(access_token)
-        .query(&[("q", keyword), ("media_type", "TEXT")])
-        .send()
-        .map_err(|_| {
-            "Threads keyword search request failed before receiving a response.".to_string()
-        })?;
+fn search_keyword_page(
+    client: &Client,
+    keyword: &str,
+    access_token: &str,
+    next_url: Option<&str>,
+) -> Result<Value, String> {
+    let request = if let Some(next_url) = next_url {
+        client.get(next_url).bearer_auth(access_token)
+    } else {
+        client
+            .get(THREADS_KEYWORD_SEARCH_ENDPOINT)
+            .bearer_auth(access_token)
+            .query(&[("q", keyword), ("media_type", "TEXT")])
+    };
+
+    let response = request.send().map_err(|_| {
+        "Threads keyword search request failed before receiving a response.".to_string()
+    })?;
 
     let status = response.status();
     let body = response
@@ -205,6 +271,16 @@ fn search_keyword(keyword: &str, access_token: &str) -> Result<Value, String> {
     }
 
     Ok(body_json)
+}
+
+fn paging_next_url(response_json: &Value) -> Option<String> {
+    response_json
+        .get("paging")
+        .and_then(|paging| paging.get("next"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|next| !next.is_empty())
+        .map(ToString::to_string)
 }
 
 fn fetch_thread_post_detail_with_token(
@@ -277,6 +353,8 @@ fn resolve_id_only_posts(
         id_only_results_count: 0,
         detail_fetched_total: 0,
         detail_failed_total: 0,
+        pages_fetched: 1,
+        pagination_stopped_reason: "no_next_page".to_string(),
         errors: Vec::new(),
     };
 

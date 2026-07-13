@@ -5,6 +5,7 @@ This is the MVP local storage boundary for AI Agent Trend Radar. It is intention
 ## Storage Boundary
 
 - `threads_posts_raw` stores raw Threads post records and source metadata.
+- `crawl_runs` stores summary diagnostics for discovery crawl runs.
 - `agent_mentions` stores normalized AI agent/tool mentions detected inside raw posts.
 - `entity_review_decisions` stores durable approve/ignore decisions for unknown candidates.
 - `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
@@ -33,6 +34,31 @@ Raw local archive of Threads posts collected for trend analysis.
 - `posted_at`: Post timestamp from Threads.
 - `collected_at`: Local collection timestamp.
 - `raw_json`: Optional raw API payload as text for replay/debugging.
+
+### crawl_runs
+
+Discovery crawler run history for local diagnostics and demo readiness.
+
+- `id`: Local crawl run identifier.
+- `mode`: Crawl mode, such as `real_threads`, `sample_mock`, or mock detail validation mode.
+- `seed_group`: Seed group requested by the UI, such as `all`, `global`, or `indonesia`.
+- `max_per_seed`: Maximum posts accepted per seed.
+- `seeds_processed`: Number of configured seeds processed.
+- `fetched_total`: Total post records returned by keyword search before cross-seed dedupe.
+- `saved_total`: Unique raw posts saved to `threads_posts_raw`.
+- `duplicates_skipped`: Duplicate Threads post IDs skipped across seeds.
+- `zero_result_seeds`: Number of seeds where keyword search succeeded but returned no posts.
+- `failed_seeds`: Number of seeds with permission/API/request errors.
+- `detail_fetched_total`: Number of ID-only search results resolved through post detail fetch.
+- `detail_failed_total`: Number of post detail fetch failures.
+- `text_missing_total`: Number of posts where detail fetch still did not provide text.
+- `started_at`: Local run start timestamp as Unix milliseconds text.
+- `finished_at`: Local run finish timestamp as Unix milliseconds text.
+- `duration_ms`: Run duration in milliseconds.
+- `status`: Local summary status such as `completed`, `completed_with_diagnostics`, or `needs_attention`.
+- `error_summary`: Safe error summary without tokens or secrets.
+
+Seed-level diagnostics are returned by the `run_discovery_crawl` command response for UI display. They are not persisted yet, keeping the MVP schema focused.
 
 ### agent_mentions
 
