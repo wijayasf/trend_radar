@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 
 use duckdb::params;
 use duckdb::Connection;
+use duckdb::Transaction;
 
 use crate::models::entities::{
     AgentMentionForCost, AgentMentionForSentiment, AgentMentionPreview, CandidateEntityReview,
-    CostClassification, DetectedAgentMention, RawPostForDetection, RegionClassification,
-    SentimentClassification,
+    CostClassification, DetectedAgentMention, EntityReviewDecision, RawPostForDetection,
+    RegionClassification, SentimentClassification,
 };
 use crate::models::threads::ThreadPostRaw;
 use crate::models::trend::WeeklyAgentMetric;
@@ -148,6 +149,45 @@ ALTER TABLE agent_mentions
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS region_reason TEXT;
 
+CREATE TABLE IF NOT EXISTS entity_review_decisions (
+    id TEXT PRIMARY KEY,
+    candidate_name TEXT NOT NULL,
+    normalized_name TEXT,
+    category TEXT,
+    status TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('approved', 'ignored')),
+    CHECK (
+        status != 'approved'
+        OR (
+            normalized_name IS NOT NULL
+            AND length(trim(normalized_name)) > 0
+            AND category IS NOT NULL
+            AND length(trim(category)) > 0
+        )
+    )
+);
+
+ALTER TABLE entity_review_decisions
+    ADD COLUMN IF NOT EXISTS normalized_name TEXT;
+
+ALTER TABLE entity_review_decisions
+    ADD COLUMN IF NOT EXISTS category TEXT;
+
+ALTER TABLE entity_review_decisions
+    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ignored';
+
+ALTER TABLE entity_review_decisions
+    ADD COLUMN IF NOT EXISTS note TEXT;
+
+ALTER TABLE entity_review_decisions
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE entity_review_decisions
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
 CREATE TABLE IF NOT EXISTS weekly_agent_metrics (
     week_start DATE NOT NULL,
     week_end DATE,
@@ -280,33 +320,20 @@ INSERT OR REPLACE INTO agent_mentions (
 ) VALUES (
     ?1,
     ?2,
-    COALESCE(
-        (SELECT reviewed_as FROM agent_mentions WHERE mention_id = ?1 AND review_status = 'approved'),
-        ?3
-    ),
+    ?3,
     ?4,
-    COALESCE(
-        (SELECT reviewed_category FROM agent_mentions WHERE mention_id = ?1 AND review_status = 'approved'),
-        ?5
-    ),
-    CASE
-        WHEN (SELECT review_status FROM agent_mentions WHERE mention_id = ?1) = 'approved'
-            THEN 'reviewed_candidate'
-        ELSE ?6
-    END,
-    CASE
-        WHEN (SELECT review_status FROM agent_mentions WHERE mention_id = ?1) IN ('approved', 'ignored')
-            THEN FALSE
-        ELSE ?7
-    END,
-    COALESCE(
-        (SELECT review_status FROM agent_mentions WHERE mention_id = ?1),
-        CASE WHEN ?7 THEN 'pending' ELSE 'approved' END
-    ),
-    (SELECT reviewed_as FROM agent_mentions WHERE mention_id = ?1),
-    (SELECT reviewed_category FROM agent_mentions WHERE mention_id = ?1),
+    ?5,
+    ?6,
+    ?7,
+    ?15,
+    ?16,
+    ?17,
     (SELECT review_note FROM agent_mentions WHERE mention_id = ?1),
-    (SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1),
+    CASE
+        WHEN ?15 IN ('approved', 'ignored')
+            THEN COALESCE((SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1), CURRENT_TIMESTAMP)
+        ELSE (SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1)
+    END,
     ?8,
     ?9,
     ?10,
@@ -315,117 +342,6 @@ INSERT OR REPLACE INTO agent_mentions (
     ?13,
     ?14
 );
-"#;
-
-const AGENT_MENTIONS_COMPATIBLE_SCHEMA_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS agent_mentions_compatible (
-    mention_id TEXT PRIMARY KEY,
-    post_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
-    agent_alias TEXT,
-    category TEXT DEFAULT 'unknown',
-    detection_source TEXT DEFAULT 'known_alias',
-    needs_review BOOLEAN DEFAULT FALSE,
-    review_status TEXT DEFAULT 'approved',
-    reviewed_as TEXT,
-    reviewed_category TEXT,
-    review_note TEXT,
-    reviewed_at TIMESTAMP,
-    region TEXT DEFAULT 'unknown',
-    confidence DOUBLE DEFAULT 0.0,
-    match_confidence DOUBLE DEFAULT 0.0,
-    relevance_score DOUBLE DEFAULT 0.0,
-    sentiment TEXT DEFAULT 'unknown',
-    sentiment_confidence DOUBLE DEFAULT 0.0,
-    sentiment_reason TEXT,
-    cost_signal TEXT DEFAULT 'none',
-    cost_confidence DOUBLE DEFAULT 0.0,
-    cost_reason TEXT,
-    source_snippet TEXT,
-    region_confidence DOUBLE DEFAULT 0.0,
-    region_reason TEXT,
-    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (post_id) REFERENCES threads_posts_raw(post_id),
-    CHECK (category IN (
-        'coding_agent',
-        'coding_assistant',
-        'generic_agent_framework',
-        'skill_or_mode',
-        'mcp_or_connector',
-        'registry_or_discovery',
-        'app_builder',
-        'unknown_candidate',
-        'unknown'
-    )),
-    CHECK (review_status IN ('pending', 'approved', 'ignored')),
-    CHECK (region IN ('indonesia', 'global', 'unknown'))
-);
-
-INSERT OR REPLACE INTO agent_mentions_compatible (
-    mention_id,
-    post_id,
-    agent_name,
-    agent_alias,
-    category,
-    detection_source,
-    needs_review,
-    review_status,
-    reviewed_as,
-    reviewed_category,
-    review_note,
-    reviewed_at,
-    region,
-    confidence,
-    match_confidence,
-    relevance_score,
-    sentiment,
-    sentiment_confidence,
-    sentiment_reason,
-    cost_signal,
-    cost_confidence,
-    cost_reason,
-    source_snippet,
-    region_confidence,
-    region_reason,
-    detected_at
-)
-SELECT
-    mention_id,
-    post_id,
-    agent_name,
-    agent_alias,
-    category,
-    COALESCE(detection_source, 'known_alias'),
-    COALESCE(needs_review, FALSE),
-    COALESCE(
-        review_status,
-        CASE WHEN COALESCE(needs_review, FALSE) THEN 'pending' ELSE 'approved' END
-    ),
-    reviewed_as,
-    reviewed_category,
-    review_note,
-    reviewed_at,
-    region,
-    confidence,
-    match_confidence,
-    relevance_score,
-    sentiment,
-    sentiment_confidence,
-    sentiment_reason,
-    cost_signal,
-    cost_confidence,
-    cost_reason,
-    source_snippet,
-    region_confidence,
-    region_reason,
-    detected_at
-FROM agent_mentions;
-
-DROP TABLE agent_mentions;
-ALTER TABLE agent_mentions_compatible RENAME TO agent_mentions;
-
-CREATE INDEX IF NOT EXISTS idx_agent_mentions_agent_region
-    ON agent_mentions(agent_name, region);
 "#;
 
 const THREADS_POST_REGION_UPDATE_SQL: &str = r#"
@@ -748,6 +664,9 @@ pub fn save_agent_mentions(mentions: &[DetectedAgentMention]) -> Result<usize, S
                     &mention.sentiment,
                     &mention.cost_signal,
                     &mention.source_snippet,
+                    &mention.review_status,
+                    &mention.reviewed_as,
+                    &mention.reviewed_category,
                 ])
                 .map_err(|error| format!("DuckDB agent mention insert failed: {error}"))?;
             saved_count += 1;
@@ -1098,6 +1017,50 @@ pub fn list_candidate_entities() -> Result<Vec<CandidateEntityReview>, String> {
     Ok(candidates)
 }
 
+pub fn load_entity_review_decisions() -> Result<Vec<EntityReviewDecision>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                id,
+                candidate_name,
+                COALESCE(normalized_name, ''),
+                COALESCE(category, ''),
+                status,
+                COALESCE(note, ''),
+                CAST(created_at AS VARCHAR),
+                CAST(updated_at AS VARCHAR)
+            FROM entity_review_decisions
+            ORDER BY updated_at DESC, candidate_name ASC
+            "#,
+        )
+        .map_err(|error| format!("DuckDB decision query preparation failed: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(EntityReviewDecision {
+                id: row.get(0)?,
+                candidate_name: row.get(1)?,
+                normalized_name: row.get(2)?,
+                category: row.get(3)?,
+                status: row.get(4)?,
+                note: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB decision query failed: {error}"))?;
+
+    let mut decisions = Vec::new();
+    for row in rows {
+        decisions.push(row.map_err(|error| format!("DuckDB decision row read failed: {error}"))?);
+    }
+
+    Ok(decisions)
+}
+
 pub fn approve_candidate_entity(
     candidate_name: &str,
     reviewed_as: &str,
@@ -1108,10 +1071,24 @@ pub fn approve_candidate_entity(
     validate_reviewed_as(reviewed_as)?;
     validate_reviewed_category(reviewed_category)?;
 
+    let decision_id = normalize_entity_decision_id(candidate_name)?;
     let database_path = initialize_database()?;
     let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB transaction failed: {error}"))?;
     let note = normalize_optional_note(note);
-    let updated_count = connection
+    upsert_entity_review_decision(
+        &transaction,
+        &decision_id,
+        candidate_name,
+        Some(reviewed_as),
+        Some(reviewed_category),
+        "approved",
+        note.as_deref(),
+    )?;
+
+    let updated_count = transaction
         .execute(
             r#"
             UPDATE agent_mentions
@@ -1135,6 +1112,10 @@ pub fn approve_candidate_entity(
         )
         .map_err(|error| format!("DuckDB candidate approval update failed: {error}"))?;
 
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB transaction commit failed: {error}"))?;
+
     Ok(updated_count)
 }
 
@@ -1144,10 +1125,24 @@ pub fn ignore_candidate_entity(
 ) -> Result<usize, String> {
     validate_candidate_name(candidate_name)?;
 
+    let decision_id = normalize_entity_decision_id(candidate_name)?;
     let database_path = initialize_database()?;
     let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB transaction failed: {error}"))?;
     let note = normalize_optional_note(note);
-    let updated_count = connection
+    upsert_entity_review_decision(
+        &transaction,
+        &decision_id,
+        candidate_name,
+        None,
+        None,
+        "ignored",
+        note.as_deref(),
+    )?;
+
+    let updated_count = transaction
         .execute(
             r#"
             UPDATE agent_mentions
@@ -1166,15 +1161,30 @@ pub fn ignore_candidate_entity(
         )
         .map_err(|error| format!("DuckDB candidate ignore update failed: {error}"))?;
 
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB transaction commit failed: {error}"))?;
+
     Ok(updated_count)
 }
 
 pub fn reset_candidate_review(candidate_name: &str) -> Result<usize, String> {
     validate_candidate_name(candidate_name)?;
 
+    let decision_id = normalize_entity_decision_id(candidate_name)?;
     let database_path = initialize_database()?;
     let connection = open_connection(&database_path)?;
-    let updated_count = connection
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB transaction failed: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM entity_review_decisions WHERE id = ?1",
+            params![decision_id],
+        )
+        .map_err(|error| format!("DuckDB decision reset failed: {error}"))?;
+
+    let updated_count = transaction
         .execute(
             r#"
             UPDATE agent_mentions
@@ -1197,6 +1207,10 @@ pub fn reset_candidate_review(candidate_name: &str) -> Result<usize, String> {
             params![candidate_name],
         )
         .map_err(|error| format!("DuckDB candidate reset update failed: {error}"))?;
+
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB transaction commit failed: {error}"))?;
 
     Ok(updated_count)
 }
@@ -1396,11 +1410,89 @@ fn split_sample_snippets(snippets_text: &str) -> Vec<String> {
         .collect()
 }
 
+fn upsert_entity_review_decision(
+    transaction: &Transaction<'_>,
+    id: &str,
+    candidate_name: &str,
+    normalized_name: Option<&str>,
+    category: Option<&str>,
+    status: &str,
+    note: Option<&str>,
+) -> Result<(), String> {
+    let updated_count = transaction
+        .execute(
+            r#"
+            UPDATE entity_review_decisions
+            SET
+                candidate_name = ?2,
+                normalized_name = ?3,
+                category = ?4,
+                status = ?5,
+                note = ?6,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            "#,
+            params![id, candidate_name, normalized_name, category, status, note],
+        )
+        .map_err(|error| format!("DuckDB decision update failed: {error}"))?;
+
+    if updated_count == 0 {
+        transaction
+            .execute(
+                r#"
+                INSERT INTO entity_review_decisions (
+                    id,
+                    candidate_name,
+                    normalized_name,
+                    category,
+                    status,
+                    note
+                ) VALUES (
+                    ?1,
+                    ?2,
+                    ?3,
+                    ?4,
+                    ?5,
+                    ?6
+                )
+                "#,
+                params![id, candidate_name, normalized_name, category, status, note],
+            )
+            .map_err(|error| format!("DuckDB decision insert failed: {error}"))?;
+    }
+
+    Ok(())
+}
+
 fn validate_candidate_name(candidate_name: &str) -> Result<(), String> {
     if candidate_name.trim().is_empty() {
         Err("Candidate name is required.".to_string())
     } else {
         Ok(())
+    }
+}
+
+fn normalize_entity_decision_id(candidate_name: &str) -> Result<String, String> {
+    let mut normalized = String::with_capacity(candidate_name.len());
+    let mut previous_was_space = true;
+
+    for character in candidate_name.chars() {
+        if character.is_alphanumeric() {
+            for lowercase in character.to_lowercase() {
+                normalized.push(lowercase);
+            }
+            previous_was_space = false;
+        } else if !previous_was_space {
+            normalized.push(' ');
+            previous_was_space = true;
+        }
+    }
+
+    let normalized = normalized.trim().to_string();
+    if normalized.is_empty() {
+        Err("Candidate name cannot be normalized.".to_string())
+    } else {
+        Ok(normalized)
     }
 }
 
@@ -1441,11 +1533,7 @@ fn normalize_optional_note(note: Option<String>) -> Option<String> {
 fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))?;
-
-    connection
-        .execute_batch(AGENT_MENTIONS_COMPATIBLE_SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB agent mentions compatibility migration failed: {error}"))
+        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))
 }
 
 fn open_connection(database_path: &Path) -> Result<Connection, String> {

@@ -6,6 +6,7 @@ This is the MVP local storage boundary for AI Agent Trend Radar. It is intention
 
 - `threads_posts_raw` stores raw Threads post records and source metadata.
 - `agent_mentions` stores normalized AI agent/tool mentions detected inside raw posts.
+- `entity_review_decisions` stores durable approve/ignore decisions for unknown candidates.
 - `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
 
 No Threads access token, API key, or app secret should ever be stored in DuckDB.
@@ -64,6 +65,21 @@ Normalized entity extraction results derived from raw posts.
 - `source_snippet`: Short post text snippet for UI preview and local audit.
 - `detected_at`: Local detection timestamp.
 
+### entity_review_decisions
+
+Durable candidate review registry used to apply approve/ignore decisions to future detections.
+
+- `id`: Normalized case-insensitive candidate key.
+- `candidate_name`: Original candidate display name.
+- `normalized_name`: Canonical entity name used when status is `approved`.
+- `category`: Approved entity category used when status is `approved`.
+- `status`: Durable decision status: `approved` or `ignored`.
+- `note`: Optional reviewer note.
+- `created_at`: Local creation timestamp.
+- `updated_at`: Local update timestamp.
+
+When an unknown candidate is detected, the entity detector checks this registry. Approved candidates are saved as `reviewed_candidate` mentions with `needs_review = false`; ignored candidates are saved with `review_status = ignored` and excluded from weekly metrics.
+
 ### weekly_agent_metrics
 
 Aggregated weekly reporting table.
@@ -101,4 +117,5 @@ The score formula should move to `config/scoring.yml` when the ranking design st
 
 - Raw, normalized, and aggregated data stay separate for auditability.
 - Schema initialization uses `CREATE TABLE IF NOT EXISTS` for MVP.
+- Schema initialization uses additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migrations; there is no `agent_mentions_compatible` table or view.
 - A fuller migration system should be introduced only when schema changes become frequent or data migration becomes risky.

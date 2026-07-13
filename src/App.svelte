@@ -93,6 +93,9 @@
   let pendingCandidateCount = 0;
   let approvedCandidateCount = 0;
   let ignoredCandidateCount = 0;
+  let entityReviewDecisions: EntityReviewDecision[] = [];
+  let approvedDecisionCount = 0;
+  let ignoredDecisionCount = 0;
   let isLoadingCandidates = false;
   let activeCandidateAction = '';
 
@@ -247,6 +250,25 @@
     message: string;
   };
 
+  type EntityReviewDecision = {
+    id: string;
+    candidate_name: string;
+    normalized_name: string;
+    category: string;
+    status: string;
+    note: string;
+    created_at: string;
+    updated_at: string;
+  };
+
+  type EntityReviewDecisionListResult = {
+    total_decisions: number;
+    approved_count: number;
+    ignored_count: number;
+    decisions: EntityReviewDecision[];
+    message: string;
+  };
+
   type CandidateReviewActionResult = {
     candidate_name: string;
     status: string;
@@ -369,16 +391,20 @@
     isLoadingCandidates = true;
     try {
       const result = await invoke<CandidateEntityListResult>('list_candidate_entities');
+      const decisions = await invoke<EntityReviewDecisionListResult>('list_entity_review_decisions');
       pendingCandidateCount = result.pending_count;
       approvedCandidateCount = result.approved_count;
       ignoredCandidateCount = result.ignored_count;
+      approvedDecisionCount = decisions.approved_count;
+      ignoredDecisionCount = decisions.ignored_count;
+      entityReviewDecisions = decisions.decisions;
       candidateEntities = result.candidates.map((candidate) => ({
         ...candidate,
         draft_reviewed_as: candidate.reviewed_as || candidate.candidate_name,
         draft_reviewed_category: candidate.reviewed_category || 'coding_agent',
         draft_note: '',
       }));
-      candidateReviewStatus = result.message;
+      candidateReviewStatus = `${result.message} ${decisions.message}`;
     } catch (error) {
       candidateReviewStatus = `error: ${String(error)}`;
     } finally {
@@ -883,6 +909,8 @@
         <span>Pending: {pendingCandidateCount}</span>
         <span>Approved: {approvedCandidateCount}</span>
         <span>Ignored: {ignoredCandidateCount}</span>
+        <span>Approved decisions: {approvedDecisionCount}</span>
+        <span>Ignored decisions: {ignoredDecisionCount}</span>
       </div>
 
       {#if candidateEntities.length > 0}
@@ -957,6 +985,60 @@
         </div>
       {:else}
         <p class="empty-state">No candidate entities yet.</p>
+      {/if}
+
+      {#if entityReviewDecisions.length > 0}
+        <div class="metrics-groups">
+          <div>
+            <h3>Decision Registry</h3>
+            <div class="metrics-table-wrap">
+              <table class="metrics-table">
+                <thead>
+                  <tr>
+                    <th>Candidate</th>
+                    <th>Normalized</th>
+                    <th>Category</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each entityReviewDecisions as decision}
+                    <tr>
+                      <td>{decision.candidate_name}</td>
+                      <td>{decision.normalized_name || '-'}</td>
+                      <td>{decision.category || '-'}</td>
+                      <td>{decision.status}</td>
+                      <td>{decision.updated_at}</td>
+                      <td>
+                        <button
+                          type="button"
+                          on:click={() =>
+                            resetCandidate({
+                              candidate_name: decision.candidate_name,
+                              mention_count: 0,
+                              first_seen: decision.created_at,
+                              latest_seen: decision.updated_at,
+                              sample_snippets: [],
+                              current_status: decision.status,
+                              reviewed_as: decision.normalized_name,
+                              reviewed_category: decision.category,
+                            })}
+                          disabled={Boolean(activeCandidateAction)}
+                        >
+                          Reset
+                        </button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      {:else}
+        <p class="empty-state">No durable decisions yet.</p>
       {/if}
     </section>
 

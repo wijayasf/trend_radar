@@ -1,9 +1,16 @@
-use crate::models::entities::{CandidateEntityListResult, CandidateReviewActionResult};
+use crate::models::entities::{
+    CandidateEntityListResult, CandidateReviewActionResult, EntityReviewDecisionListResult,
+};
 use crate::services::candidate_review;
 
 #[tauri::command]
 pub fn list_candidate_entities() -> Result<CandidateEntityListResult, String> {
     candidate_review::list_candidate_entities()
+}
+
+#[tauri::command]
+pub fn list_entity_review_decisions() -> Result<EntityReviewDecisionListResult, String> {
+    candidate_review::list_entity_review_decisions()
 }
 
 #[tauri::command]

@@ -1,4 +1,6 @@
-use crate::models::entities::{CandidateEntityListResult, CandidateReviewActionResult};
+use crate::models::entities::{
+    CandidateEntityListResult, CandidateReviewActionResult, EntityReviewDecisionListResult,
+};
 use crate::services::duckdb_service;
 
 pub fn list_candidate_entities() -> Result<CandidateEntityListResult, String> {
@@ -27,6 +29,29 @@ pub fn list_candidate_entities() -> Result<CandidateEntityListResult, String> {
             pending_count
         ),
         candidates,
+    })
+}
+
+pub fn list_entity_review_decisions() -> Result<EntityReviewDecisionListResult, String> {
+    let decisions = duckdb_service::load_entity_review_decisions()?;
+    let approved_count = decisions
+        .iter()
+        .filter(|decision| decision.status == "approved")
+        .count();
+    let ignored_count = decisions
+        .iter()
+        .filter(|decision| decision.status == "ignored")
+        .count();
+
+    Ok(EntityReviewDecisionListResult {
+        total_decisions: decisions.len(),
+        approved_count,
+        ignored_count,
+        message: format!(
+            "Loaded {} durable candidate review decisions.",
+            decisions.len()
+        ),
+        decisions,
     })
 }
 

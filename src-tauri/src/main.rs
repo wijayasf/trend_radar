@@ -15,6 +15,7 @@ fn main() {
             commands::candidates::approve_candidate_entity,
             commands::candidates::ignore_candidate_entity,
             commands::candidates::list_candidate_entities,
+            commands::candidates::list_entity_review_decisions,
             commands::candidates::reset_candidate_review,
             commands::discovery::run_discovery_crawl,
             commands::threads::collect_threads_by_keyword,
@@ -39,10 +40,48 @@ mod tests {
     use duckdb::Connection;
     use serde_json::Value;
 
+    use crate::models::threads::ThreadPostRaw;
     use crate::services::{
         candidate_review, cost_classifier, discovery_crawler, duckdb_service, entity_detector,
         region_classifier, report_exporter, sentiment_classifier, weekly_aggregator,
     };
+
+    #[test]
+    fn validates_raw_post_insert_after_schema_init() {
+        let database_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-raw-insert-schema-regression.duckdb");
+        cleanup_database_files(&database_path);
+        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+
+        duckdb_service::initialize_database().expect("schema initialization should succeed");
+        let saved_count = duckdb_service::save_threads_raw_posts(&[ThreadPostRaw {
+            post_id: "schema-regression-raw-001".to_string(),
+            text: "NovaForge appears in AI agent workflow notes.".to_string(),
+            text_missing: false,
+            author_id: None,
+            author_username: Some("schema_tester".to_string()),
+            media_type: Some("TEXT".to_string()),
+            permalink: Some("mock://threads/schema-regression-raw-001".to_string()),
+            posted_at: Some("2026-07-06T09:00:00Z".to_string()),
+            raw_json: "{}".to_string(),
+        }])
+        .expect("raw post insert should not depend on mention compatibility migration");
+
+        assert_eq!(saved_count, 1);
+        assert_eq!(
+            duckdb_service::count_threads_raw_posts().expect("raw post count should be readable"),
+            1
+        );
+
+        let entity_result =
+            entity_detector::detect_agent_mentions().expect("entity detection should still work");
+        assert!(entity_result
+            .preview
+            .iter()
+            .any(|mention| mention.agent_name == "NovaForge"));
+
+        cleanup_database_files(&database_path);
+    }
 
     #[test]
     fn validates_sample_full_mvp_flow() {
@@ -141,6 +180,78 @@ mod tests {
         )
         .expect("candidate ignore should succeed");
         assert_eq!(ignored_candidate.updated_mentions_count, 1);
+
+        let decisions = candidate_review::list_entity_review_decisions()
+            .expect("candidate decision registry should load");
+        assert!(decisions.decisions.iter().any(|decision| {
+            decision.candidate_name == "NovaForge"
+                && decision.normalized_name == "NovaForge"
+                && decision.category == "coding_agent"
+                && decision.status == "approved"
+        }));
+        assert!(
+            decisions
+                .decisions
+                .iter()
+                .any(|decision| decision.candidate_name == "FlowPilot"
+                    && decision.status == "ignored")
+        );
+
+        duckdb_service::save_threads_raw_posts(&[
+            ThreadPostRaw {
+                post_id: "mock-detail-novaforge-followup".to_string(),
+                text: "NovaForge keeps appearing in AI agent coding workflow notes.".to_string(),
+                text_missing: false,
+                author_id: None,
+                author_username: Some("mock_candidate_reviewer".to_string()),
+                media_type: Some("TEXT".to_string()),
+                permalink: Some("mock://threads/mock-detail-novaforge-followup".to_string()),
+                posted_at: Some("2026-07-05T12:00:00Z".to_string()),
+                raw_json: "{}".to_string(),
+            },
+            ThreadPostRaw {
+                post_id: "mock-detail-flowpilot-followup".to_string(),
+                text: "FlowPilot appears again in AI agent workflow chatter.".to_string(),
+                text_missing: false,
+                author_id: None,
+                author_username: Some("mock_candidate_reviewer".to_string()),
+                media_type: Some("TEXT".to_string()),
+                permalink: Some("mock://threads/mock-detail-flowpilot-followup".to_string()),
+                posted_at: Some("2026-07-05T13:00:00Z".to_string()),
+                raw_json: "{}".to_string(),
+            },
+        ])
+        .expect("follow-up candidate posts should save");
+
+        let redetection_result =
+            entity_detector::detect_agent_mentions().expect("redetection should apply decisions");
+        assert!(redetection_result.preview.iter().any(|mention| {
+            mention.agent_name == "NovaForge"
+                && mention.category == "coding_agent"
+                && mention.detection_source == "reviewed_candidate"
+                && !mention.needs_review
+        }));
+        assert!(redetection_result.preview.iter().any(|mention| {
+            mention.agent_name == "FlowPilot"
+                && mention.category == "unknown_candidate"
+                && !mention.needs_review
+        }));
+
+        let reviewed_candidates = candidate_review::list_candidate_entities()
+            .expect("candidate list should reflect durable decisions");
+        assert!(reviewed_candidates.candidates.iter().any(|candidate| {
+            candidate.candidate_name == "NovaForge" && candidate.current_status == "approved"
+        }));
+        assert!(reviewed_candidates.candidates.iter().any(|candidate| {
+            candidate.candidate_name == "FlowPilot" && candidate.current_status == "ignored"
+        }));
+
+        let _ = region_classifier::classify_regions()
+            .expect("region reclassification should succeed after candidate redetection");
+        let _ = sentiment_classifier::classify_sentiments()
+            .expect("sentiment reclassification should succeed after candidate redetection");
+        let _ = cost_classifier::classify_cost_signals()
+            .expect("cost reclassification should succeed after candidate redetection");
 
         let weekly_result = weekly_aggregator::aggregate_weekly_metrics()
             .expect("weekly aggregation should succeed");

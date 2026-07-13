@@ -1,9 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
 use crate::models::entities::{
     AgentAliasConfig, AliasesConfig, DetectedAgentMention, EntityDetectionResult,
+    EntityReviewDecision,
 };
 use crate::services::duckdb_service;
 
@@ -18,10 +19,16 @@ pub fn detect_agent_mentions() -> Result<EntityDetectionResult, String> {
     }
 
     let posts = duckdb_service::load_raw_posts_for_detection()?;
+    let decisions = entity_review_decisions_by_id()?;
     let mut mentions = Vec::new();
 
     for post in &posts {
-        mentions.extend(detect_mentions_in_text(&post.post_id, &post.text, &config));
+        mentions.extend(detect_mentions_in_text(
+            &post.post_id,
+            &post.text,
+            &config,
+            &decisions,
+        ));
     }
 
     let saved_count = duckdb_service::save_agent_mentions(&mentions)?;
@@ -78,6 +85,7 @@ fn detect_mentions_in_text(
     post_id: &str,
     text: &str,
     config: &AliasesConfig,
+    decisions: &HashMap<String, EntityReviewDecision>,
 ) -> Vec<DetectedAgentMention> {
     let normalized_text = normalize_text(text);
     if normalized_text.is_empty() {
@@ -103,6 +111,9 @@ fn detect_mentions_in_text(
                 category: agent.category.clone(),
                 detection_source: "known_alias".to_string(),
                 needs_review: false,
+                review_status: "approved".to_string(),
+                reviewed_as: None,
+                reviewed_category: None,
                 region: "unknown".to_string(),
                 confidence,
                 match_confidence: confidence,
@@ -119,6 +130,7 @@ fn detect_mentions_in_text(
         text,
         &normalized_text,
         &known_aliases,
+        decisions,
         &mut seen_agents,
     ));
 
@@ -223,6 +235,7 @@ fn detect_candidate_mentions(
     text: &str,
     normalized_text: &str,
     known_aliases: &HashSet<String>,
+    decisions: &HashMap<String, EntityReviewDecision>,
     seen_agents: &mut HashSet<String>,
 ) -> Vec<DetectedAgentMention> {
     if !has_candidate_context(normalized_text) {
@@ -246,25 +259,96 @@ fn detect_candidate_mentions(
         }
 
         seen_agents.insert(candidate.clone());
-        candidates.push(DetectedAgentMention {
-            mention_id: stable_mention_id(post_id, &format!("candidate::{candidate}")),
-            post_id: post_id.to_string(),
-            agent_name: candidate.clone(),
-            agent_alias: candidate,
-            category: "unknown_candidate".to_string(),
-            detection_source: "candidate_pattern".to_string(),
-            needs_review: true,
-            region: "unknown".to_string(),
-            confidence: 0.62,
-            match_confidence: 0.62,
-            relevance_score: 0.66,
-            sentiment: "unknown".to_string(),
-            cost_signal: "none".to_string(),
-            source_snippet: source_snippet(text),
-        });
+        let decision = decisions.get(&normalized_candidate);
+        candidates.push(candidate_mention_from_decision(
+            post_id, text, candidate, decision,
+        ));
     }
 
     candidates
+}
+
+fn entity_review_decisions_by_id() -> Result<HashMap<String, EntityReviewDecision>, String> {
+    let mut decisions = HashMap::new();
+    for decision in duckdb_service::load_entity_review_decisions()? {
+        decisions.insert(decision.id.clone(), decision);
+    }
+    Ok(decisions)
+}
+
+fn candidate_mention_from_decision(
+    post_id: &str,
+    text: &str,
+    candidate: String,
+    decision: Option<&EntityReviewDecision>,
+) -> DetectedAgentMention {
+    let mention_id = stable_mention_id(post_id, &format!("candidate::{candidate}"));
+
+    if let Some(decision) = decision {
+        if decision.status == "approved" {
+            return DetectedAgentMention {
+                mention_id,
+                post_id: post_id.to_string(),
+                agent_name: decision.normalized_name.clone(),
+                agent_alias: candidate,
+                category: decision.category.clone(),
+                detection_source: "reviewed_candidate".to_string(),
+                needs_review: false,
+                review_status: "approved".to_string(),
+                reviewed_as: Some(decision.normalized_name.clone()),
+                reviewed_category: Some(decision.category.clone()),
+                region: "unknown".to_string(),
+                confidence: 0.82,
+                match_confidence: 0.82,
+                relevance_score: 0.86,
+                sentiment: "unknown".to_string(),
+                cost_signal: "none".to_string(),
+                source_snippet: source_snippet(text),
+            };
+        }
+
+        if decision.status == "ignored" {
+            return DetectedAgentMention {
+                mention_id,
+                post_id: post_id.to_string(),
+                agent_name: candidate.clone(),
+                agent_alias: candidate,
+                category: "unknown_candidate".to_string(),
+                detection_source: "candidate_pattern".to_string(),
+                needs_review: false,
+                review_status: "ignored".to_string(),
+                reviewed_as: None,
+                reviewed_category: None,
+                region: "unknown".to_string(),
+                confidence: 0.62,
+                match_confidence: 0.62,
+                relevance_score: 0.66,
+                sentiment: "unknown".to_string(),
+                cost_signal: "none".to_string(),
+                source_snippet: source_snippet(text),
+            };
+        }
+    }
+
+    DetectedAgentMention {
+        mention_id,
+        post_id: post_id.to_string(),
+        agent_name: candidate.clone(),
+        agent_alias: candidate,
+        category: "unknown_candidate".to_string(),
+        detection_source: "candidate_pattern".to_string(),
+        needs_review: true,
+        review_status: "pending".to_string(),
+        reviewed_as: None,
+        reviewed_category: None,
+        region: "unknown".to_string(),
+        confidence: 0.62,
+        match_confidence: 0.62,
+        relevance_score: 0.66,
+        sentiment: "unknown".to_string(),
+        cost_signal: "none".to_string(),
+        source_snippet: source_snippet(text),
+    }
 }
 
 fn known_aliases(config: &AliasesConfig) -> HashSet<String> {
@@ -512,7 +596,7 @@ mod tests {
     }
 
     fn mention_names(text: &str) -> Vec<String> {
-        detect_mentions_in_text("post-1", text, &test_config())
+        detect_mentions_in_text("post-1", text, &test_config(), &HashMap::new())
             .into_iter()
             .map(|mention| mention.agent_name)
             .collect()
@@ -532,6 +616,7 @@ mod tests {
             "post-1",
             "cavemen mode is faster for coding agents",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert_eq!(mentions[0].agent_name, "Caveman");
@@ -544,6 +629,7 @@ mod tests {
             "post-1",
             "Ponytail helps avoid overengineering",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert_eq!(mentions[0].agent_name, "Ponytail");
@@ -556,6 +642,7 @@ mod tests {
             "post-1",
             "Ponytail.dev is useful for Claude Code workflow",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert_eq!(mentions[0].agent_name, "Ponytail");
@@ -569,6 +656,7 @@ mod tests {
             "post-1",
             "I tried Astryx for agentic workflow",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert!(mentions.iter().any(|mention| mention.agent_name == "Astryx"
@@ -582,6 +670,7 @@ mod tests {
             "post-1",
             "NovaForge is showing up in AI agent discovery threads.",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert!(mentions
@@ -598,6 +687,7 @@ mod tests {
             "post-1",
             "ExplainX has many AI agent skills",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert_eq!(mentions[0].agent_name, "ExplainX");
@@ -610,6 +700,7 @@ mod tests {
             "post-1",
             "explainx.ai has a useful registry",
             &test_config(),
+            &HashMap::new(),
         );
 
         assert_eq!(mentions[0].agent_name, "ExplainX");
@@ -618,8 +709,12 @@ mod tests {
 
     #[test]
     fn detects_mcp_when_context_is_connector_related() {
-        let mentions =
-            detect_mentions_in_text("post-1", "MCP server for Claude Code", &test_config());
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "MCP server for Claude Code",
+            &test_config(),
+            &HashMap::new(),
+        );
 
         assert_eq!(mentions[0].agent_name, "MCP");
         assert_eq!(mentions[0].category, "mcp_or_connector");
@@ -627,8 +722,12 @@ mod tests {
 
     #[test]
     fn detects_model_context_protocol_as_mcp() {
-        let mentions =
-            detect_mentions_in_text("post-1", "Model Context Protocol is useful", &test_config());
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "Model Context Protocol is useful",
+            &test_config(),
+            &HashMap::new(),
+        );
 
         assert_eq!(mentions[0].agent_name, "MCP");
         assert_eq!(mentions[0].category, "mcp_or_connector");

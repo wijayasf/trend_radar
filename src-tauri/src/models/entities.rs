@@ -73,6 +73,27 @@ pub struct CandidateEntityReview {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct EntityReviewDecision {
+    pub id: String,
+    pub candidate_name: String,
+    pub normalized_name: String,
+    pub category: String,
+    pub status: String,
+    pub note: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EntityReviewDecisionListResult {
+    pub total_decisions: usize,
+    pub approved_count: usize,
+    pub ignored_count: usize,
+    pub decisions: Vec<EntityReviewDecision>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct CandidateEntityListResult {
     pub total_candidates: usize,
     pub pending_count: usize,
@@ -99,6 +120,9 @@ pub struct DetectedAgentMention {
     pub category: String,
     pub detection_source: String,
     pub needs_review: bool,
+    pub review_status: String,
+    pub reviewed_as: Option<String>,
+    pub reviewed_category: Option<String>,
     pub region: String,
     pub confidence: f64,
     pub match_confidence: f64,
