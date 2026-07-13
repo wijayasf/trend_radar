@@ -44,6 +44,11 @@ Normalized entity extraction results derived from raw posts.
 - `category`: MVP entity category such as `coding_agent`, `skill_or_mode`, `mcp_or_connector`, `registry_or_discovery`, or `unknown_candidate`.
 - `detection_source`: `known_alias` for configured aliases or `candidate_pattern` for rule-based discovery candidates.
 - `needs_review`: `true` for candidate entities that should be manually reviewed before being treated as known entities.
+- `review_status`: Review workflow state: `pending`, `approved`, or `ignored`. Known aliases default to `approved`; new unknown candidates default to `pending`.
+- `reviewed_as`: Optional canonical name assigned during candidate approval.
+- `reviewed_category`: Optional approved category assigned during candidate approval.
+- `review_note`: Optional local reviewer note.
+- `reviewed_at`: Local timestamp for the latest review action.
 - `region`: `indonesia`, `global`, or `unknown`.
 - `region_confidence`: Rule-based classifier confidence copied from the source post classification.
 - `region_reason`: Short explainable reason copied from the source post classification.
@@ -77,6 +82,8 @@ Aggregated weekly reporting table.
 - Percentages: positive %, negative %, and cost negative/boros %.
 - `trend_score`: MVP ranking score.
 - `computed_at`: Local computation timestamp.
+
+Weekly aggregation includes known aliases and approved candidates. Pending `unknown_candidate` rows and ignored candidates are excluded from Top Indonesia/Global/Unknown metrics so unreviewed discoveries do not pollute rankings.
 
 MVP trend score formula:
 

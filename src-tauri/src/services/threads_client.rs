@@ -411,7 +411,9 @@ fn search_threads_posts_by_keyword_mock_id_only(
         "data": [
             { "id": "mock-detail-ponytail" },
             { "id": "mock-detail-cavemen" },
-            { "id": "mock-detail-astryx" }
+            { "id": "mock-detail-astryx" },
+            { "id": "mock-detail-novaforge" },
+            { "id": "mock-detail-flowpilot" }
         ],
         "source": "mock_keyword_search_id_only",
         "keyword": keyword
@@ -449,6 +451,22 @@ fn mock_thread_post_detail_response(post_id: &str) -> Result<Value, String> {
                 "id": "mock-owner-astryx",
                 "username": "mock_researcher"
             }
+        })),
+        "mock-detail-novaforge" => Ok(serde_json::json!({
+            "id": "mock-detail-novaforge",
+            "text": "NovaForge is showing up in AI agent discovery threads as a possible coding agent.",
+            "media_type": "TEXT",
+            "permalink": "mock://threads/mock-detail-novaforge",
+            "timestamp": "2026-07-04T12:00:00Z",
+            "username": "mock_candidate_reviewer"
+        })),
+        "mock-detail-flowpilot" => Ok(serde_json::json!({
+            "id": "mock-detail-flowpilot",
+            "text": "FlowPilot is mentioned in AI agent workflow chatter but needs review before ranking.",
+            "media_type": "TEXT",
+            "permalink": "mock://threads/mock-detail-flowpilot",
+            "timestamp": "2026-07-04T13:00:00Z",
+            "username": "mock_candidate_reviewer"
         })),
         other => Err(format!("Mock post detail not found for {other}")),
     }

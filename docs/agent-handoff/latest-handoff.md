@@ -1,83 +1,100 @@
 # Latest Handoff
 
 Date: 2026-07-13
-Session: 026-real-discovery-entity-validation
+Session: 027-candidate-review-workflow
 Agent: Codex
 
 ## Current State
 
-Real Threads discovery has now been validated end-to-end at the service layer:
+Candidate Review Workflow MVP has been added.
 
-1. real keyword search
-2. ID-only response handling
-3. post detail fetch
-4. raw post storage
-5. entity detection
-6. region/sentiment/cost classifiers
-7. weekly aggregation
+Unknown candidates detected by the entity detector can now be reviewed from the UI and backend commands:
 
-## Real Crawl Result
+1. list candidates
+2. approve candidate as canonical entity/category
+3. ignore false positive candidate
+4. reset candidate back to pending
 
-- `seeds_processed`: `21`
-- `fetched_total`: `7`
-- `id_only_results_count`: `7`
-- `detail_fetched_total`: `7`
-- `detail_failed_total`: `0`
-- `text_missing_total`: `0`
-- `saved_total`: `5`
-- `duplicates_skipped`: `2`
-- `failed_seeds`: `0`
-- `mode`: `real_threads`
+## Commands Added
 
-## Entity Result
+- `list_candidate_entities`
+- `approve_candidate_entity(candidate_name, reviewed_as, reviewed_category, note?)`
+- `ignore_candidate_entity(candidate_name, note?)`
+- `reset_candidate_review(candidate_name)`
 
-- `analyzed_posts`: `5`
-- `mentions_found`: `7`
-- `saved_count`: `7`
-- detected entities:
-  - `Caveman`
-  - `Cline`
-  - `Astryx`
-  - `Claude Code`
-  - `Ponytail`
+## Data Model
 
-`Cavemen` normalized correctly to `Caveman`.
+Review state is stored directly on `agent_mentions`:
 
-## Weekly Metrics Result
+- `review_status`: `pending`, `approved`, or `ignored`
+- `reviewed_as`
+- `reviewed_category`
+- `review_note`
+- `reviewed_at`
 
-- `metrics_count`: `7`
-- `indonesia_count`: `2`
-- `global_count`: `5`
-- `unknown_count`: `0`
+Known aliases default to `approved`. New unknown candidates default to `pending`.
 
-## Validation Commands
+## Aggregation Behavior
 
-- `npx tauri dev`: launched successfully.
-- `cargo test validates_real_threads_discovery_smoke -- --ignored --nocapture --test-threads=1`: passed.
+- Known aliases are included in weekly metrics.
+- Approved candidates are included in weekly metrics under their reviewed canonical name/category.
+- Ignored candidates are excluded.
+- Pending `unknown_candidate` rows are excluded from Top metrics.
+
+## UI
+
+New section: `Candidate Review`
+
+It shows:
+
+- pending/approved/ignored counts
+- candidate name
+- mention count
+- sample snippet
+- canonical name input
+- category select
+- review note input
+- Approve, Ignore, and Reset buttons
+
+## Report Export
+
+Markdown weekly report now includes a lightweight `Candidate Review Notes` section.
+
+## Validation
+
 - `npm run build`: passed.
 - `cargo fmt --check`: passed.
 - `cargo check`: passed.
 - `cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
+- `data/sample_threads_posts.json` parse check: passed.
+- `src-tauri/data`: empty.
 
-## Known Warnings
+## Sample Validation Result
 
-- Existing placeholder Rust warnings remain.
-- Native UI click automation was not performed due macOS Assistive Access requirements.
-- Public search scope may still be limited by Threads app approval.
+- `NovaForge` pending candidate detected.
+- `FlowPilot` pending candidate detected.
+- `NovaForge` approved as `coding_agent`, updated `1` mention, and appeared in weekly metrics.
+- `FlowPilot` ignored, updated `1` mention, and did not appear in weekly metrics.
 
-## Suggested Next Step
+## Pending / Recommended Next Step
 
-Manual UI full-flow validation:
+Run manual UI smoke test for the Candidate Review panel:
 
-1. Run Discovery Crawl
+1. Run Discovery Crawl or Import Sample Posts
 2. Detect Agent Mentions
-3. Classify Regions
-4. Classify Sentiments
-5. Classify Cost Signals
+3. Refresh Candidate Review
+4. Approve `NovaForge`
+5. Ignore `FlowPilot`
 6. Aggregate Weekly Metrics
-7. Export Markdown/CSV
+7. Confirm approved candidate appears and ignored candidate stays out
 
-Then checkpoint commit this real validation session if desired.
+Then consider durable `entity_review_decisions` or alias-config promotion if reviewed candidates should apply automatically to future posts.
+
+## Risk Note
+
+- Current review state is row-level on `agent_mentions`, not a global reusable candidate decision registry.
+- Existing Rust placeholder dead-code warnings remain.
+- Token and `.env` contents were not read or printed.
 
 ## Token Usage
 

@@ -88,6 +88,24 @@
   let csvExportPreview = '';
   let isExportingMarkdown = false;
   let isExportingCsv = false;
+  let candidateReviewStatus = 'Idle';
+  let candidateEntities: CandidateEntityReview[] = [];
+  let pendingCandidateCount = 0;
+  let approvedCandidateCount = 0;
+  let ignoredCandidateCount = 0;
+  let isLoadingCandidates = false;
+  let activeCandidateAction = '';
+
+  const candidateCategoryOptions = [
+    'coding_agent',
+    'coding_assistant',
+    'generic_agent_framework',
+    'skill_or_mode',
+    'mcp_or_connector',
+    'registry_or_discovery',
+    'app_builder',
+    'unknown',
+  ];
 
   type ThreadsCollectionResult = {
     keyword: string;
@@ -206,6 +224,36 @@
     preview: string;
   };
 
+  type CandidateEntityReview = {
+    candidate_name: string;
+    mention_count: number;
+    first_seen: string;
+    latest_seen: string;
+    sample_snippets: string[];
+    current_status: string;
+    reviewed_as: string;
+    reviewed_category: string;
+    draft_reviewed_as?: string;
+    draft_reviewed_category?: string;
+    draft_note?: string;
+  };
+
+  type CandidateEntityListResult = {
+    total_candidates: number;
+    pending_count: number;
+    approved_count: number;
+    ignored_count: number;
+    candidates: CandidateEntityReview[];
+    message: string;
+  };
+
+  type CandidateReviewActionResult = {
+    candidate_name: string;
+    status: string;
+    updated_mentions_count: number;
+    message: string;
+  };
+
   type RegionClassificationResult = {
     posts_analyzed: number;
     indonesia_count: number;
@@ -230,6 +278,7 @@
     try {
       databaseHealth = await invoke<string>('check_database_health');
       await refreshRawPostsCount();
+      await loadCandidateEntities();
     } catch (error) {
       databaseHealth = `error: ${String(error)}`;
     }
@@ -314,6 +363,94 @@
     rawPostsCount = await invoke<number>('count_threads_raw_posts');
   }
 
+  async function loadCandidateEntities() {
+    if (isLoadingCandidates) return;
+
+    isLoadingCandidates = true;
+    try {
+      const result = await invoke<CandidateEntityListResult>('list_candidate_entities');
+      pendingCandidateCount = result.pending_count;
+      approvedCandidateCount = result.approved_count;
+      ignoredCandidateCount = result.ignored_count;
+      candidateEntities = result.candidates.map((candidate) => ({
+        ...candidate,
+        draft_reviewed_as: candidate.reviewed_as || candidate.candidate_name,
+        draft_reviewed_category: candidate.reviewed_category || 'coding_agent',
+        draft_note: '',
+      }));
+      candidateReviewStatus = result.message;
+    } catch (error) {
+      candidateReviewStatus = `error: ${String(error)}`;
+    } finally {
+      isLoadingCandidates = false;
+    }
+  }
+
+  async function approveCandidate(candidate: CandidateEntityReview) {
+    if (activeCandidateAction) return;
+
+    const reviewedAs = (candidate.draft_reviewed_as || candidate.candidate_name).trim();
+    const reviewedCategory = (candidate.draft_reviewed_category || 'coding_agent').trim();
+    if (!reviewedAs || !reviewedCategory) return;
+
+    activeCandidateAction = candidate.candidate_name;
+    candidateReviewStatus = `Approving ${candidate.candidate_name}...`;
+
+    try {
+      const result = await invoke<CandidateReviewActionResult>('approve_candidate_entity', {
+        candidateName: candidate.candidate_name,
+        reviewedAs,
+        reviewedCategory,
+        note: candidate.draft_note?.trim() || null,
+      });
+      candidateReviewStatus = result.message;
+      await loadCandidateEntities();
+    } catch (error) {
+      candidateReviewStatus = `error: ${String(error)}`;
+    } finally {
+      activeCandidateAction = '';
+    }
+  }
+
+  async function ignoreCandidate(candidate: CandidateEntityReview) {
+    if (activeCandidateAction) return;
+
+    activeCandidateAction = candidate.candidate_name;
+    candidateReviewStatus = `Ignoring ${candidate.candidate_name}...`;
+
+    try {
+      const result = await invoke<CandidateReviewActionResult>('ignore_candidate_entity', {
+        candidateName: candidate.candidate_name,
+        note: candidate.draft_note?.trim() || null,
+      });
+      candidateReviewStatus = result.message;
+      await loadCandidateEntities();
+    } catch (error) {
+      candidateReviewStatus = `error: ${String(error)}`;
+    } finally {
+      activeCandidateAction = '';
+    }
+  }
+
+  async function resetCandidate(candidate: CandidateEntityReview) {
+    if (activeCandidateAction) return;
+
+    activeCandidateAction = candidate.candidate_name;
+    candidateReviewStatus = `Resetting ${candidate.candidate_name}...`;
+
+    try {
+      const result = await invoke<CandidateReviewActionResult>('reset_candidate_review', {
+        candidateName: candidate.candidate_name,
+      });
+      candidateReviewStatus = result.message;
+      await loadCandidateEntities();
+    } catch (error) {
+      candidateReviewStatus = `error: ${String(error)}`;
+    } finally {
+      activeCandidateAction = '';
+    }
+  }
+
   async function runDiscoveryCrawl() {
     if (isRunningDiscovery) return;
 
@@ -384,6 +521,7 @@
       savedMentions = result.saved_count;
       detectionPreview = result.preview;
       detectStatus = result.message;
+      await loadCandidateEntities();
     } catch (error) {
       detectStatus = `error: ${String(error)}`;
     } finally {
@@ -726,6 +864,99 @@
             </article>
           {/each}
         </div>
+      {/if}
+    </section>
+
+    <section class="detector-panel" aria-label="Candidate review">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">Candidate review</p>
+          <h2>Review Unknown Candidates</h2>
+        </div>
+        <button type="button" on:click={loadCandidateEntities} disabled={isLoadingCandidates}>
+          {isLoadingCandidates ? 'Refreshing' : 'Refresh Candidates'}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {candidateReviewStatus}</span>
+        <span>Pending: {pendingCandidateCount}</span>
+        <span>Approved: {approvedCandidateCount}</span>
+        <span>Ignored: {ignoredCandidateCount}</span>
+      </div>
+
+      {#if candidateEntities.length > 0}
+        <div class="mention-preview" aria-label="Candidate entity review list">
+          {#each candidateEntities as candidate}
+            <article class="mention-row">
+              <div>
+                <strong>{candidate.candidate_name}</strong>
+                <span>{candidate.current_status}</span>
+                <span>{candidate.mention_count} mentions</span>
+                {#if candidate.reviewed_as}
+                  <span>reviewed as {candidate.reviewed_as}</span>
+                {/if}
+                {#if candidate.reviewed_category}
+                  <span>{candidate.reviewed_category}</span>
+                {/if}
+              </div>
+
+              {#if candidate.sample_snippets.length > 0}
+                <p>{candidate.sample_snippets[0]}</p>
+              {/if}
+
+              <div class="collector-row discovery-row">
+                <input
+                  bind:value={candidate.draft_reviewed_as}
+                  placeholder="Canonical name"
+                  aria-label={`Canonical name for ${candidate.candidate_name}`}
+                  disabled={activeCandidateAction === candidate.candidate_name}
+                />
+                <select
+                  bind:value={candidate.draft_reviewed_category}
+                  aria-label={`Category for ${candidate.candidate_name}`}
+                  disabled={activeCandidateAction === candidate.candidate_name}
+                >
+                  {#each candidateCategoryOptions as category}
+                    <option value={category}>{category}</option>
+                  {/each}
+                </select>
+                <input
+                  bind:value={candidate.draft_note}
+                  placeholder="Review note"
+                  aria-label={`Review note for ${candidate.candidate_name}`}
+                  disabled={activeCandidateAction === candidate.candidate_name}
+                />
+              </div>
+
+              <div class="export-actions">
+                <button
+                  type="button"
+                  on:click={() => approveCandidate(candidate)}
+                  disabled={Boolean(activeCandidateAction)}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  on:click={() => ignoreCandidate(candidate)}
+                  disabled={Boolean(activeCandidateAction)}
+                >
+                  Ignore
+                </button>
+                <button
+                  type="button"
+                  on:click={() => resetCandidate(candidate)}
+                  disabled={Boolean(activeCandidateAction)}
+                >
+                  Reset
+                </button>
+              </div>
+            </article>
+          {/each}
+        </div>
+      {:else}
+        <p class="empty-state">No candidate entities yet.</p>
       {/if}
     </section>
 

@@ -34,6 +34,7 @@ The application is designed as a local-first desktop app, using DuckDB for local
 - Sample data import for local testing.
 - Entity detection for AI Agent-related tools and skills.
 - Candidate entity extraction for new or unknown tool names that need review.
+- Candidate review workflow to approve, ignore, or normalize unknown candidates.
 - Region classification for Indonesia, global, and unknown signals.
 - Sentiment and cost/boros signal classification.
 - Weekly aggregation with trend score ranking.
@@ -127,6 +128,7 @@ Recommended local flow:
 ```text
 Run AI Agent Discovery Crawl
 → Detect Agent Mentions
+→ Review Unknown Candidates
 → Classify Regions
 → Classify Sentiments
 → Classify Cost Signals

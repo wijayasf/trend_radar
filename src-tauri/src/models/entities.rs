@@ -60,6 +60,36 @@ pub struct CostClassification {
     pub cost_reason: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CandidateEntityReview {
+    pub candidate_name: String,
+    pub mention_count: usize,
+    pub first_seen: String,
+    pub latest_seen: String,
+    pub sample_snippets: Vec<String>,
+    pub current_status: String,
+    pub reviewed_as: String,
+    pub reviewed_category: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CandidateEntityListResult {
+    pub total_candidates: usize,
+    pub pending_count: usize,
+    pub approved_count: usize,
+    pub ignored_count: usize,
+    pub candidates: Vec<CandidateEntityReview>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CandidateReviewActionResult {
+    pub candidate_name: String,
+    pub status: String,
+    pub updated_mentions_count: usize,
+    pub message: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct DetectedAgentMention {
     pub mention_id: String,

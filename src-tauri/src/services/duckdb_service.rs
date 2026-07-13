@@ -5,8 +5,9 @@ use duckdb::params;
 use duckdb::Connection;
 
 use crate::models::entities::{
-    AgentMentionForCost, AgentMentionForSentiment, AgentMentionPreview, CostClassification,
-    DetectedAgentMention, RawPostForDetection, RegionClassification, SentimentClassification,
+    AgentMentionForCost, AgentMentionForSentiment, AgentMentionPreview, CandidateEntityReview,
+    CostClassification, DetectedAgentMention, RawPostForDetection, RegionClassification,
+    SentimentClassification,
 };
 use crate::models::threads::ThreadPostRaw;
 use crate::models::trend::WeeklyAgentMetric;
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
     category TEXT DEFAULT 'unknown',
     detection_source TEXT DEFAULT 'known_alias',
     needs_review BOOLEAN DEFAULT FALSE,
+    review_status TEXT DEFAULT 'approved',
+    reviewed_as TEXT,
+    reviewed_category TEXT,
+    review_note TEXT,
+    reviewed_at TIMESTAMP,
     region TEXT DEFAULT 'unknown',
     confidence DOUBLE DEFAULT 0.0,
     match_confidence DOUBLE DEFAULT 0.0,
@@ -81,6 +87,7 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
         'unknown_candidate',
         'unknown'
     )),
+    CHECK (review_status IN ('pending', 'approved', 'ignored')),
     CHECK (region IN ('indonesia', 'global', 'unknown'))
 );
 
@@ -92,6 +99,21 @@ ALTER TABLE agent_mentions
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS needs_review BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS review_status TEXT DEFAULT 'approved';
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS reviewed_as TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS reviewed_category TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS review_note TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS match_confidence DOUBLE DEFAULT 0.0;
@@ -243,6 +265,11 @@ INSERT OR REPLACE INTO agent_mentions (
     category,
     detection_source,
     needs_review,
+    review_status,
+    reviewed_as,
+    reviewed_category,
+    review_note,
+    reviewed_at,
     region,
     confidence,
     match_confidence,
@@ -253,11 +280,33 @@ INSERT OR REPLACE INTO agent_mentions (
 ) VALUES (
     ?1,
     ?2,
-    ?3,
+    COALESCE(
+        (SELECT reviewed_as FROM agent_mentions WHERE mention_id = ?1 AND review_status = 'approved'),
+        ?3
+    ),
     ?4,
-    ?5,
-    ?6,
-    ?7,
+    COALESCE(
+        (SELECT reviewed_category FROM agent_mentions WHERE mention_id = ?1 AND review_status = 'approved'),
+        ?5
+    ),
+    CASE
+        WHEN (SELECT review_status FROM agent_mentions WHERE mention_id = ?1) = 'approved'
+            THEN 'reviewed_candidate'
+        ELSE ?6
+    END,
+    CASE
+        WHEN (SELECT review_status FROM agent_mentions WHERE mention_id = ?1) IN ('approved', 'ignored')
+            THEN FALSE
+        ELSE ?7
+    END,
+    COALESCE(
+        (SELECT review_status FROM agent_mentions WHERE mention_id = ?1),
+        CASE WHEN ?7 THEN 'pending' ELSE 'approved' END
+    ),
+    (SELECT reviewed_as FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT reviewed_category FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT review_note FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1),
     ?8,
     ?9,
     ?10,
@@ -277,6 +326,11 @@ CREATE TABLE IF NOT EXISTS agent_mentions_compatible (
     category TEXT DEFAULT 'unknown',
     detection_source TEXT DEFAULT 'known_alias',
     needs_review BOOLEAN DEFAULT FALSE,
+    review_status TEXT DEFAULT 'approved',
+    reviewed_as TEXT,
+    reviewed_category TEXT,
+    review_note TEXT,
+    reviewed_at TIMESTAMP,
     region TEXT DEFAULT 'unknown',
     confidence DOUBLE DEFAULT 0.0,
     match_confidence DOUBLE DEFAULT 0.0,
@@ -303,6 +357,7 @@ CREATE TABLE IF NOT EXISTS agent_mentions_compatible (
         'unknown_candidate',
         'unknown'
     )),
+    CHECK (review_status IN ('pending', 'approved', 'ignored')),
     CHECK (region IN ('indonesia', 'global', 'unknown'))
 );
 
@@ -314,6 +369,11 @@ INSERT OR REPLACE INTO agent_mentions_compatible (
     category,
     detection_source,
     needs_review,
+    review_status,
+    reviewed_as,
+    reviewed_category,
+    review_note,
+    reviewed_at,
     region,
     confidence,
     match_confidence,
@@ -337,6 +397,14 @@ SELECT
     category,
     COALESCE(detection_source, 'known_alias'),
     COALESCE(needs_review, FALSE),
+    COALESCE(
+        review_status,
+        CASE WHEN COALESCE(needs_review, FALSE) THEN 'pending' ELSE 'approved' END
+    ),
+    reviewed_as,
+    reviewed_category,
+    review_note,
+    reviewed_at,
     region,
     confidence,
     match_confidence,
@@ -469,6 +537,14 @@ WITH base AS (
     FROM agent_mentions m
     JOIN threads_posts_raw p ON p.post_id = m.post_id
     WHERE m.agent_name IS NOT NULL AND length(trim(m.agent_name)) > 0
+        AND COALESCE(
+            m.review_status,
+            CASE WHEN COALESCE(m.needs_review, FALSE) THEN 'pending' ELSE 'approved' END
+        ) != 'ignored'
+        AND (
+            COALESCE(m.category, 'unknown') != 'unknown_candidate'
+            OR COALESCE(m.review_status, 'pending') = 'approved'
+        )
 ),
 grouped AS (
     SELECT
@@ -950,6 +1026,181 @@ pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPrevi
     Ok(preview)
 }
 
+pub fn list_candidate_entities() -> Result<Vec<CandidateEntityReview>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            WITH candidates AS (
+                SELECT
+                    COALESCE(NULLIF(agent_alias, ''), agent_name) AS candidate_name,
+                    COALESCE(
+                        review_status,
+                        CASE WHEN COALESCE(needs_review, FALSE) THEN 'pending' ELSE 'approved' END
+                    ) AS current_status,
+                    COALESCE(reviewed_as, '') AS reviewed_as,
+                    COALESCE(reviewed_category, '') AS reviewed_category,
+                    COALESCE(source_snippet, '') AS source_snippet,
+                    detected_at
+                FROM agent_mentions
+                WHERE
+                    COALESCE(detection_source, '') IN ('candidate_pattern', 'reviewed_candidate')
+                    OR COALESCE(category, '') = 'unknown_candidate'
+            )
+            SELECT
+                candidate_name,
+                COUNT(*) AS mention_count,
+                CAST(MIN(detected_at) AS VARCHAR) AS first_seen,
+                CAST(MAX(detected_at) AS VARCHAR) AS latest_seen,
+                COALESCE(MAX(current_status), 'pending') AS current_status,
+                COALESCE(MAX(reviewed_as), '') AS reviewed_as,
+                COALESCE(MAX(reviewed_category), '') AS reviewed_category,
+                COALESCE(string_agg(DISTINCT source_snippet, '|||'), '') AS sample_snippets
+            FROM candidates
+            WHERE candidate_name IS NOT NULL AND length(trim(candidate_name)) > 0
+            GROUP BY candidate_name
+            ORDER BY
+                CASE COALESCE(MAX(current_status), 'pending')
+                    WHEN 'pending' THEN 0
+                    WHEN 'approved' THEN 1
+                    WHEN 'ignored' THEN 2
+                    ELSE 3
+                END,
+                mention_count DESC,
+                candidate_name ASC
+            "#,
+        )
+        .map_err(|error| format!("DuckDB candidate query preparation failed: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let mention_count: i64 = row.get(1)?;
+            let snippets_text: String = row.get(7)?;
+            Ok(CandidateEntityReview {
+                candidate_name: row.get(0)?,
+                mention_count: i64_to_usize(mention_count)?,
+                first_seen: row.get(2)?,
+                latest_seen: row.get(3)?,
+                current_status: row.get(4)?,
+                reviewed_as: row.get(5)?,
+                reviewed_category: row.get(6)?,
+                sample_snippets: split_sample_snippets(&snippets_text),
+            })
+        })
+        .map_err(|error| format!("DuckDB candidate query failed: {error}"))?;
+
+    let mut candidates = Vec::new();
+    for row in rows {
+        candidates.push(row.map_err(|error| format!("DuckDB candidate row read failed: {error}"))?);
+    }
+
+    Ok(candidates)
+}
+
+pub fn approve_candidate_entity(
+    candidate_name: &str,
+    reviewed_as: &str,
+    reviewed_category: &str,
+    note: Option<String>,
+) -> Result<usize, String> {
+    validate_candidate_name(candidate_name)?;
+    validate_reviewed_as(reviewed_as)?;
+    validate_reviewed_category(reviewed_category)?;
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let note = normalize_optional_note(note);
+    let updated_count = connection
+        .execute(
+            r#"
+            UPDATE agent_mentions
+            SET
+                agent_name = ?2,
+                category = ?3,
+                needs_review = FALSE,
+                detection_source = 'reviewed_candidate',
+                review_status = 'approved',
+                reviewed_as = ?2,
+                reviewed_category = ?3,
+                review_note = ?4,
+                reviewed_at = CURRENT_TIMESTAMP
+            WHERE lower(trim(COALESCE(NULLIF(agent_alias, ''), agent_name))) = lower(trim(?1))
+                AND (
+                    COALESCE(detection_source, '') IN ('candidate_pattern', 'reviewed_candidate')
+                    OR COALESCE(category, '') = 'unknown_candidate'
+                )
+            "#,
+            params![candidate_name, reviewed_as, reviewed_category, note],
+        )
+        .map_err(|error| format!("DuckDB candidate approval update failed: {error}"))?;
+
+    Ok(updated_count)
+}
+
+pub fn ignore_candidate_entity(
+    candidate_name: &str,
+    note: Option<String>,
+) -> Result<usize, String> {
+    validate_candidate_name(candidate_name)?;
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let note = normalize_optional_note(note);
+    let updated_count = connection
+        .execute(
+            r#"
+            UPDATE agent_mentions
+            SET
+                needs_review = FALSE,
+                review_status = 'ignored',
+                review_note = ?2,
+                reviewed_at = CURRENT_TIMESTAMP
+            WHERE lower(trim(COALESCE(NULLIF(agent_alias, ''), agent_name))) = lower(trim(?1))
+                AND (
+                    COALESCE(detection_source, '') IN ('candidate_pattern', 'reviewed_candidate')
+                    OR COALESCE(category, '') = 'unknown_candidate'
+                )
+            "#,
+            params![candidate_name, note],
+        )
+        .map_err(|error| format!("DuckDB candidate ignore update failed: {error}"))?;
+
+    Ok(updated_count)
+}
+
+pub fn reset_candidate_review(candidate_name: &str) -> Result<usize, String> {
+    validate_candidate_name(candidate_name)?;
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let updated_count = connection
+        .execute(
+            r#"
+            UPDATE agent_mentions
+            SET
+                agent_name = COALESCE(NULLIF(agent_alias, ''), agent_name),
+                category = 'unknown_candidate',
+                detection_source = 'candidate_pattern',
+                needs_review = TRUE,
+                review_status = 'pending',
+                reviewed_as = NULL,
+                reviewed_category = NULL,
+                review_note = NULL,
+                reviewed_at = NULL
+            WHERE lower(trim(COALESCE(NULLIF(agent_alias, ''), agent_name))) = lower(trim(?1))
+                AND (
+                    COALESCE(detection_source, '') IN ('candidate_pattern', 'reviewed_candidate')
+                    OR COALESCE(category, '') = 'unknown_candidate'
+                )
+            "#,
+            params![candidate_name],
+        )
+        .map_err(|error| format!("DuckDB candidate reset update failed: {error}"))?;
+
+    Ok(updated_count)
+}
+
 pub fn rebuild_weekly_agent_metrics() -> Result<usize, String> {
     let database_path = initialize_database()?;
     let connection = open_connection(&database_path)?;
@@ -1133,6 +1384,58 @@ fn initialize_database_at(database_path: &Path) -> Result<(), String> {
 
 fn i64_to_usize(value: i64) -> Result<usize, duckdb::Error> {
     usize::try_from(value).map_err(|error| duckdb::Error::ToSqlConversionFailure(Box::new(error)))
+}
+
+fn split_sample_snippets(snippets_text: &str) -> Vec<String> {
+    snippets_text
+        .split("|||")
+        .map(str::trim)
+        .filter(|snippet| !snippet.is_empty())
+        .take(3)
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn validate_candidate_name(candidate_name: &str) -> Result<(), String> {
+    if candidate_name.trim().is_empty() {
+        Err("Candidate name is required.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_reviewed_as(reviewed_as: &str) -> Result<(), String> {
+    if reviewed_as.trim().is_empty() {
+        Err("Canonical reviewed_as name is required.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_reviewed_category(reviewed_category: &str) -> Result<(), String> {
+    const ALLOWED_CATEGORIES: &[&str] = &[
+        "coding_agent",
+        "coding_assistant",
+        "generic_agent_framework",
+        "skill_or_mode",
+        "mcp_or_connector",
+        "registry_or_discovery",
+        "app_builder",
+        "unknown",
+    ];
+
+    if ALLOWED_CATEGORIES.contains(&reviewed_category) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid reviewed category: {reviewed_category}. Choose a supported entity category."
+        ))
+    }
+}
+
+fn normalize_optional_note(note: Option<String>) -> Option<String> {
+    note.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn run_schema_initialization(connection: &Connection) -> Result<(), String> {

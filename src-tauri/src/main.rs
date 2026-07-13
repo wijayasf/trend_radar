@@ -12,6 +12,10 @@ fn main() {
             commands::config::env_config_status,
             commands::database::check_database_health,
             commands::database::count_threads_raw_posts,
+            commands::candidates::approve_candidate_entity,
+            commands::candidates::ignore_candidate_entity,
+            commands::candidates::list_candidate_entities,
+            commands::candidates::reset_candidate_review,
             commands::discovery::run_discovery_crawl,
             commands::threads::collect_threads_by_keyword,
             commands::threads::import_sample_threads_posts,
@@ -36,8 +40,8 @@ mod tests {
     use serde_json::Value;
 
     use crate::services::{
-        cost_classifier, discovery_crawler, duckdb_service, entity_detector, region_classifier,
-        report_exporter, sentiment_classifier, weekly_aggregator,
+        candidate_review, cost_classifier, discovery_crawler, duckdb_service, entity_detector,
+        region_classifier, report_exporter, sentiment_classifier, weekly_aggregator,
     };
 
     #[test]
@@ -57,11 +61,11 @@ mod tests {
         assert!(discovery_result.id_only_results_count > 0);
         assert!(discovery_result.detail_fetched_total > 0);
         assert_eq!(discovery_result.detail_failed_total, 0);
-        assert_eq!(discovery_result.saved_total, 3);
+        assert_eq!(discovery_result.saved_total, 5);
         assert!(discovery_result.duplicates_skipped > 0);
         assert_eq!(
             duckdb_service::count_threads_raw_posts().expect("raw post count should be readable"),
-            3
+            5
         );
 
         let entity_result =
@@ -109,6 +113,35 @@ mod tests {
         );
         assert!(cost_result.updated_mentions_count > 0);
 
+        let candidates =
+            candidate_review::list_candidate_entities().expect("candidate list should load");
+        assert!(candidates
+            .candidates
+            .iter()
+            .any(|candidate| candidate.candidate_name == "NovaForge"
+                && candidate.current_status == "pending"));
+        assert!(candidates
+            .candidates
+            .iter()
+            .any(|candidate| candidate.candidate_name == "FlowPilot"
+                && candidate.current_status == "pending"));
+
+        let approved_candidate = candidate_review::approve_candidate_entity(
+            "NovaForge".to_string(),
+            "NovaForge".to_string(),
+            "coding_agent".to_string(),
+            Some("sample candidate approval".to_string()),
+        )
+        .expect("candidate approval should succeed");
+        assert_eq!(approved_candidate.updated_mentions_count, 1);
+
+        let ignored_candidate = candidate_review::ignore_candidate_entity(
+            "FlowPilot".to_string(),
+            Some("sample false positive ignore".to_string()),
+        )
+        .expect("candidate ignore should succeed");
+        assert_eq!(ignored_candidate.updated_mentions_count, 1);
+
         let weekly_result = weekly_aggregator::aggregate_weekly_metrics()
             .expect("weekly aggregation should succeed");
         assert!(weekly_result.metrics_count > 0);
@@ -132,6 +165,18 @@ mod tests {
             .chain(weekly_result.top_global.iter())
             .chain(weekly_result.top_unknown.iter())
             .any(|metric| metric.agent_name == "Astryx"));
+        assert!(weekly_result
+            .top_indonesia
+            .iter()
+            .chain(weekly_result.top_global.iter())
+            .chain(weekly_result.top_unknown.iter())
+            .any(|metric| metric.agent_name == "NovaForge"));
+        assert!(!weekly_result
+            .top_indonesia
+            .iter()
+            .chain(weekly_result.top_global.iter())
+            .chain(weekly_result.top_unknown.iter())
+            .any(|metric| metric.agent_name == "FlowPilot"));
 
         let markdown_export = report_exporter::export_weekly_report_markdown()
             .expect("Markdown weekly report export should succeed");

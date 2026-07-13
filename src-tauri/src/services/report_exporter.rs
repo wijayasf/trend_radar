@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::models::entities::CandidateEntityReview;
 use crate::models::trend::{ReportExportResult, WeeklyAgentMetric};
 use crate::services::duckdb_service;
 use crate::utils::config;
@@ -28,8 +29,9 @@ struct ReportSummary {
 
 pub fn export_weekly_report_markdown() -> Result<ReportExportResult, String> {
     let metrics = load_export_metrics()?;
+    let candidates = duckdb_service::list_candidate_entities()?;
     let summary = summarize_metrics(&metrics);
-    let markdown = render_markdown_report(&summary, &metrics);
+    let markdown = render_markdown_report(&summary, &metrics, &candidates);
     let file_path = export_path(&summary, "weekly-report", "md")?;
 
     fs::write(&file_path, &markdown).map_err(|error| {
@@ -133,7 +135,11 @@ fn summarize_metrics(metrics: &[WeeklyAgentMetric]) -> ReportSummary {
     summary
 }
 
-fn render_markdown_report(summary: &ReportSummary, metrics: &[WeeklyAgentMetric]) -> String {
+fn render_markdown_report(
+    summary: &ReportSummary,
+    metrics: &[WeeklyAgentMetric],
+    candidates: &[CandidateEntityReview],
+) -> String {
     let mut markdown = String::new();
 
     markdown.push_str("# AI Agent Trend Radar Weekly Report\n\n");
@@ -181,6 +187,9 @@ fn render_markdown_report(summary: &ReportSummary, metrics: &[WeeklyAgentMetric]
     ));
     markdown.push_str(&format!("- Cost mixed: {}\n", summary.cost_mixed_count));
 
+    markdown.push_str("\n## Candidate Review Notes\n\n");
+    markdown.push_str(&render_candidate_review_notes(candidates));
+
     markdown.push_str("\n## Research Notes\n\n");
     markdown.push_str(
         "- Threads signal represents public conversation signal, not actual usage telemetry.\n",
@@ -189,6 +198,48 @@ fn render_markdown_report(summary: &ReportSummary, metrics: &[WeeklyAgentMetric]
     markdown.push_str("- Trend score uses the current MVP formula from weekly aggregation.\n");
 
     markdown
+}
+
+fn render_candidate_review_notes(candidates: &[CandidateEntityReview]) -> String {
+    if candidates.is_empty() {
+        return "No candidate review notes yet.\n".to_string();
+    }
+
+    let mut notes = String::new();
+    append_candidate_group(&mut notes, "Pending candidates", candidates, "pending");
+    append_candidate_group(&mut notes, "Approved candidates", candidates, "approved");
+    append_candidate_group(&mut notes, "Ignored candidates", candidates, "ignored");
+    notes
+}
+
+fn append_candidate_group(
+    notes: &mut String,
+    title: &str,
+    candidates: &[CandidateEntityReview],
+    status: &str,
+) {
+    notes.push_str(&format!("{title}:\n"));
+    let mut matched = false;
+
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.current_status == status)
+    {
+        matched = true;
+        let suffix = if candidate.reviewed_as.is_empty() {
+            String::new()
+        } else {
+            format!(" as {}", candidate.reviewed_as)
+        };
+        notes.push_str(&format!(
+            "- {}{} ({} mentions)\n",
+            candidate.candidate_name, suffix, candidate.mention_count
+        ));
+    }
+
+    if !matched {
+        notes.push_str("- none\n");
+    }
 }
 
 fn render_region_table(metrics: &[WeeklyAgentMetric], region: &str) -> String {
