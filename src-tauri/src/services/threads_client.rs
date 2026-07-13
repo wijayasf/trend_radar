@@ -17,7 +17,7 @@ use crate::utils::config::{self, THREADS_ACCESS_TOKEN_ENV};
 
 const THREADS_KEYWORD_SEARCH_ENDPOINT: &str = "https://graph.threads.net/v1.0/keyword_search";
 const THREADS_DETAIL_ENDPOINT_BASE: &str = "https://graph.threads.net/v1.0";
-const THREADS_DETAIL_FIELDS: &str = "id,text,caption,media_type,permalink,timestamp,username,owner";
+const THREADS_DETAIL_FIELDS: &str = "id,text,media_type,permalink,timestamp,username,owner";
 const SAMPLE_THREADS_POSTS_PATH: &str = "data/sample_threads_posts.json";
 const PERMISSION_ERROR_MESSAGE: &str = "Threads keyword search permission missing. Add threads_keyword_search in Meta Developer Permissions and regenerate token.";
 

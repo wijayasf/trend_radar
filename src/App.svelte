@@ -19,6 +19,7 @@
   let discoveryDetailFetchedTotal = 0;
   let discoveryDetailFailedTotal = 0;
   let discoveryIdOnlyResultsCount = 0;
+  let discoveryTextMissingTotal = 0;
   let discoverySavedTotal = 0;
   let discoveryDuplicatesSkipped = 0;
   let discoveryFailedSeeds = 0;
@@ -108,6 +109,7 @@
     fetched_total: number;
     detail_fetched_total: number;
     detail_failed_total: number;
+    text_missing_total: number;
     saved_total: number;
     duplicates_skipped: number;
     failed_seeds: number;
@@ -322,6 +324,7 @@
     discoveryDetailFetchedTotal = 0;
     discoveryDetailFailedTotal = 0;
     discoveryIdOnlyResultsCount = 0;
+    discoveryTextMissingTotal = 0;
     discoverySavedTotal = 0;
     discoveryDuplicatesSkipped = 0;
     discoveryFailedSeeds = 0;
@@ -339,6 +342,7 @@
       discoveryDetailFetchedTotal = result.detail_fetched_total;
       discoveryDetailFailedTotal = result.detail_failed_total;
       discoveryIdOnlyResultsCount = result.id_only_results_count;
+      discoveryTextMissingTotal = result.text_missing_total;
       discoverySavedTotal = result.saved_total;
       discoveryDuplicatesSkipped = result.duplicates_skipped;
       discoveryFailedSeeds = result.failed_seeds;
@@ -618,6 +622,7 @@
         <span>ID-only results: {discoveryIdOnlyResultsCount}</span>
         <span>Detail fetched: {discoveryDetailFetchedTotal}</span>
         <span>Detail failed: {discoveryDetailFailedTotal}</span>
+        <span>Text missing: {discoveryTextMissingTotal}</span>
         <span>Saved total: {discoverySavedTotal}</span>
         <span>Duplicates skipped: {discoveryDuplicatesSkipped}</span>
         <span>Failed seeds: {discoveryFailedSeeds}</span>

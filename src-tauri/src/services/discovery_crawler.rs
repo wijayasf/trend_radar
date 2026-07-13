@@ -32,6 +32,7 @@ pub fn run_discovery_crawl(
     let mut detail_fetched_total = 0;
     let mut detail_failed_total = 0;
     let mut id_only_results_count = 0;
+    let mut text_missing_total = 0;
     let mut duplicates_skipped = 0;
     let mut failed_seeds = 0;
     let mut errors = Vec::new();
@@ -60,6 +61,7 @@ pub fn run_discovery_crawl(
                         continue;
                     }
                     if post.text.trim().is_empty() {
+                        text_missing_total += 1;
                         push_error(
                             &mut errors,
                             "Post detail fetched but text is unavailable for this post.",
@@ -84,6 +86,18 @@ pub fn run_discovery_crawl(
     } else {
         duckdb_service::save_threads_raw_posts(&collected_posts)?
     };
+    let message = if fetched_total == 0 {
+        format!(
+            "success_with_zero_results: Discovery crawl processed {} seeds and found no matching posts.",
+            seeds.len()
+        )
+    } else {
+        format!(
+            "Discovery crawl processed {} seeds and saved {} unique posts.",
+            seeds.len(),
+            saved_total
+        )
+    };
 
     Ok(DiscoveryCrawlResult {
         seed_group,
@@ -92,16 +106,13 @@ pub fn run_discovery_crawl(
         fetched_total,
         detail_fetched_total,
         detail_failed_total,
+        text_missing_total,
         saved_total,
         duplicates_skipped,
         failed_seeds,
         id_only_results_count,
         errors,
-        message: format!(
-            "Discovery crawl processed {} seeds and saved {} unique posts.",
-            seeds.len(),
-            saved_total
-        ),
+        message,
     })
 }
 
@@ -133,6 +144,7 @@ fn run_sample_discovery(
         fetched_total,
         detail_fetched_total: 0,
         detail_failed_total: 0,
+        text_missing_total: 0,
         saved_total,
         duplicates_skipped,
         failed_seeds: 0,

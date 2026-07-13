@@ -50,6 +50,7 @@ pub struct DiscoveryCrawlResult {
     pub fetched_total: usize,
     pub detail_fetched_total: usize,
     pub detail_failed_total: usize,
+    pub text_missing_total: usize,
     pub saved_total: usize,
     pub duplicates_skipped: usize,
     pub failed_seeds: usize,
