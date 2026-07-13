@@ -43,17 +43,22 @@ mod tests {
         cleanup_database_files(&database_path);
         std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
         std::env::set_var("THREADS_ACCESS_TOKEN", "");
+        std::env::set_var("THREADS_MOCK_ID_ONLY_DETAIL", "1");
 
         let discovery_result =
             discovery_crawler::run_discovery_crawl(Some("all".to_string()), Some(10), Some(false))
                 .expect(
-                    "discovery crawl should fall back to sample/mock when real API is unavailable",
+                    "discovery crawl should resolve mock ID-only keyword search via detail fetch",
                 );
-        assert_eq!(discovery_result.mode, "sample_mock");
-        assert!(discovery_result.saved_total >= 10);
+        assert_eq!(discovery_result.mode, "mock_id_only_detail");
+        assert!(discovery_result.id_only_results_count > 0);
+        assert!(discovery_result.detail_fetched_total > 0);
+        assert_eq!(discovery_result.detail_failed_total, 0);
+        assert_eq!(discovery_result.saved_total, 3);
+        assert!(discovery_result.duplicates_skipped > 0);
         assert_eq!(
             duckdb_service::count_threads_raw_posts().expect("raw post count should be readable"),
-            10
+            3
         );
 
         let entity_result =
@@ -109,6 +114,8 @@ mod tests {
         assert!(weekly_result
             .top_indonesia
             .iter()
+            .chain(weekly_result.top_global.iter())
+            .chain(weekly_result.top_unknown.iter())
             .any(|metric| metric.agent_name == "Claude Code"));
         assert!(weekly_result
             .top_indonesia
@@ -142,6 +149,7 @@ mod tests {
             let _ = fs::remove_file(&csv_export.file_path);
         }
         cleanup_database_files(&database_path);
+        std::env::remove_var("THREADS_MOCK_ID_ONLY_DETAIL");
     }
 
     fn temp_database_path() -> PathBuf {

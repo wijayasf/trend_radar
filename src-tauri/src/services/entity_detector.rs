@@ -347,9 +347,7 @@ fn extract_candidate_names(text: &str) -> Vec<String> {
 }
 
 fn clean_candidate_token(token: &str) -> &str {
-    token.trim_matches(|character: char| {
-        !(character.is_alphanumeric() || character == '.' || character == '-' || character == '_')
-    })
+    token.trim_matches(|character: char| !character.is_alphanumeric())
 }
 
 fn is_domain_like(token: &str) -> bool {
@@ -382,6 +380,7 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "ai agent trend",
         "ai coding",
         "developer",
+        "indonesia",
         "model context protocol",
         "testing",
         "threads",

@@ -10,12 +10,14 @@ use serde_json::Value;
 use crate::models::threads::{
     SampleThreadsImportResult, SampleThreadsPost, ThreadPostRaw, ThreadsApiError,
     ThreadsApiErrorEnvelope, ThreadsApiPost, ThreadsCollectionResult, ThreadsKeywordSearchResponse,
+    ThreadsSearchResult,
 };
 use crate::services::duckdb_service;
 use crate::utils::config::{self, THREADS_ACCESS_TOKEN_ENV};
 
 const THREADS_KEYWORD_SEARCH_ENDPOINT: &str = "https://graph.threads.net/v1.0/keyword_search";
-const THREADS_SEARCH_FIELDS: &str = "id,text,media_type,permalink,timestamp";
+const THREADS_DETAIL_ENDPOINT_BASE: &str = "https://graph.threads.net/v1.0";
+const THREADS_DETAIL_FIELDS: &str = "id,text,caption,media_type,permalink,timestamp,username,owner";
 const SAMPLE_THREADS_POSTS_PATH: &str = "data/sample_threads_posts.json";
 const PERMISSION_ERROR_MESSAGE: &str = "Threads keyword search permission missing. Add threads_keyword_search in Meta Developer Permissions and regenerate token.";
 
@@ -25,9 +27,9 @@ pub fn collect_threads_by_keyword(keyword: String) -> Result<ThreadsCollectionRe
         return Err("Keyword is required.".to_string());
     }
 
-    let posts = search_threads_posts_by_keyword(&normalized_keyword)?;
-    let fetched_count = posts.len();
-    let saved_count = duckdb_service::save_threads_raw_posts(&posts)?;
+    let search_result = search_threads_posts_by_keyword(&normalized_keyword)?;
+    let fetched_count = search_result.posts.len();
+    let saved_count = duckdb_service::save_threads_raw_posts(&search_result.posts)?;
 
     let message = if fetched_count == 0 {
         "No Threads posts returned for keyword.".to_string()
@@ -43,15 +45,31 @@ pub fn collect_threads_by_keyword(keyword: String) -> Result<ThreadsCollectionRe
     })
 }
 
-pub fn search_threads_posts_by_keyword(keyword: &str) -> Result<Vec<ThreadPostRaw>, String> {
+pub fn search_threads_posts_by_keyword(keyword: &str) -> Result<ThreadsSearchResult, String> {
     let normalized_keyword = keyword.trim();
     if normalized_keyword.is_empty() {
         return Err("Keyword is required.".to_string());
     }
 
+    #[cfg(test)]
+    if mock_id_only_detail_enabled() {
+        return search_threads_posts_by_keyword_mock_id_only(normalized_keyword);
+    }
+
     let access_token = read_access_token()?;
     let response_json = search_keyword(normalized_keyword, &access_token)?;
-    parse_keyword_search_response(&response_json)
+    let posts = parse_keyword_search_response(&response_json)?;
+    resolve_id_only_posts(posts, &access_token, "real_threads")
+}
+
+pub fn fetch_thread_post_detail(post_id: &str) -> Result<ThreadPostRaw, String> {
+    let normalized_post_id = post_id.trim();
+    if normalized_post_id.is_empty() {
+        return Err("Threads post ID is required.".to_string());
+    }
+
+    let access_token = read_access_token()?;
+    fetch_thread_post_detail_with_token(normalized_post_id, &access_token)
 }
 
 pub fn import_sample_threads_posts() -> Result<SampleThreadsImportResult, String> {
@@ -155,11 +173,8 @@ fn search_keyword(keyword: &str, access_token: &str) -> Result<Value, String> {
 
     let response = client
         .get(THREADS_KEYWORD_SEARCH_ENDPOINT)
-        .query(&[
-            ("q", keyword),
-            ("fields", THREADS_SEARCH_FIELDS),
-            ("access_token", access_token),
-        ])
+        .bearer_auth(access_token)
+        .query(&[("q", keyword), ("media_type", "TEXT")])
         .send()
         .map_err(|_| {
             "Threads keyword search request failed before receiving a response.".to_string()
@@ -192,6 +207,111 @@ fn search_keyword(keyword: &str, access_token: &str) -> Result<Value, String> {
     Ok(body_json)
 }
 
+fn fetch_thread_post_detail_with_token(
+    post_id: &str,
+    access_token: &str,
+) -> Result<ThreadPostRaw, String> {
+    #[cfg(test)]
+    if mock_id_only_detail_enabled() {
+        let detail_json = mock_thread_post_detail_response(post_id)?;
+        let api_post =
+            serde_json::from_value::<ThreadsApiPost>(detail_json.clone()).map_err(|error| {
+                format!("Threads post detail response shape is unexpected: {error}")
+            })?;
+        return Ok(api_post.into_raw_post(detail_json.to_string()));
+    }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("Threads HTTP client initialization failed: {error}"))?;
+    let endpoint = format!("{THREADS_DETAIL_ENDPOINT_BASE}/{post_id}");
+
+    let response = client
+        .get(endpoint)
+        .bearer_auth(access_token)
+        .query(&[("fields", THREADS_DETAIL_FIELDS)])
+        .send()
+        .map_err(|_| {
+            "Threads post detail request failed before receiving a response.".to_string()
+        })?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("Threads post detail response body read failed: {error}"))?;
+
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return Err("Threads API rate limit reached while fetching post detail.".to_string());
+    }
+
+    let body_json = serde_json::from_str::<Value>(&body)
+        .map_err(|error| format!("Threads post detail returned non-JSON response: {error}"))?;
+
+    if !status.is_success() {
+        return Err(format_api_error(status, &body_json));
+    }
+
+    if let Ok(error_envelope) = serde_json::from_value::<ThreadsApiErrorEnvelope>(body_json.clone())
+    {
+        return Err(format_threads_error(
+            "Threads post detail returned an error",
+            &error_envelope,
+        ));
+    }
+
+    let api_post = serde_json::from_value::<ThreadsApiPost>(body_json.clone())
+        .map_err(|error| format!("Threads post detail response shape is unexpected: {error}"))?;
+
+    Ok(api_post.into_raw_post(body_json.to_string()))
+}
+
+fn resolve_id_only_posts(
+    posts: Vec<ThreadPostRaw>,
+    access_token: &str,
+    mode: &str,
+) -> Result<ThreadsSearchResult, String> {
+    let mut result = ThreadsSearchResult {
+        posts: Vec::with_capacity(posts.len()),
+        mode: mode.to_string(),
+        id_only_results_count: 0,
+        detail_fetched_total: 0,
+        detail_failed_total: 0,
+        errors: Vec::new(),
+    };
+
+    for post in posts {
+        if !post.text_missing {
+            result.posts.push(post);
+            continue;
+        }
+
+        result.id_only_results_count += 1;
+        match fetch_thread_post_detail_with_token(&post.post_id, access_token) {
+            Ok(detail_post) => {
+                result.detail_fetched_total += 1;
+                if detail_post.text_missing {
+                    push_search_error(
+                        &mut result.errors,
+                        "Post detail fetched but text is unavailable for this post.",
+                    );
+                }
+                result.posts.push(detail_post);
+            }
+            Err(error) => {
+                result.detail_failed_total += 1;
+                push_search_error(
+                    &mut result.errors,
+                    &format!("Post detail fetch failed for {}: {error}", post.post_id),
+                );
+                result.posts.push(post);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 fn parse_keyword_search_response(response_json: &Value) -> Result<Vec<ThreadPostRaw>, String> {
     let envelope = serde_json::from_value::<ThreadsKeywordSearchResponse>(response_json.clone())
         .map_err(|error| format!("Threads keyword search response shape is unexpected: {error}"))?;
@@ -213,6 +333,12 @@ fn parse_keyword_search_response(response_json: &Value) -> Result<Vec<ThreadPost
     }
 
     Ok(posts)
+}
+
+fn push_search_error(errors: &mut Vec<String>, error: &str) {
+    if errors.len() < 8 {
+        errors.push(error.to_string());
+    }
 }
 
 fn format_api_error(status: StatusCode, body_json: &Value) -> String {
@@ -267,6 +393,65 @@ fn is_permission_error(error: &ThreadsApiError) -> bool {
             .message
             .to_lowercase()
             .contains("application does not have permission")
+}
+
+#[cfg(test)]
+fn mock_id_only_detail_enabled() -> bool {
+    env::var("THREADS_MOCK_ID_ONLY_DETAIL")
+        .ok()
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+fn search_threads_posts_by_keyword_mock_id_only(
+    keyword: &str,
+) -> Result<ThreadsSearchResult, String> {
+    let keyword_json = serde_json::json!({
+        "data": [
+            { "id": "mock-detail-ponytail" },
+            { "id": "mock-detail-cavemen" },
+            { "id": "mock-detail-astryx" }
+        ],
+        "source": "mock_keyword_search_id_only",
+        "keyword": keyword
+    });
+    let posts = parse_keyword_search_response(&keyword_json)?;
+    resolve_id_only_posts(posts, "mock-token-redacted", "mock_id_only_detail")
+}
+
+#[cfg(test)]
+fn mock_thread_post_detail_response(post_id: &str) -> Result<Value, String> {
+    match post_id {
+        "mock-detail-ponytail" => Ok(serde_json::json!({
+            "id": "mock-detail-ponytail",
+            "text": "Ponytail helps Claude Code workflow and feels useful for AI agent discovery.",
+            "media_type": "TEXT",
+            "permalink": "mock://threads/mock-detail-ponytail",
+            "timestamp": "2026-07-01T09:00:00Z",
+            "username": "mock_builder"
+        })),
+        "mock-detail-cavemen" => Ok(serde_json::json!({
+            "id": "mock-detail-cavemen",
+            "text": "Cavemen mode membantu agentic coding buat developer Indonesia.",
+            "media_type": "TEXT",
+            "permalink": "mock://threads/mock-detail-cavemen",
+            "timestamp": "2026-07-02T10:00:00Z",
+            "username": "mock_dev_indo"
+        })),
+        "mock-detail-astryx" => Ok(serde_json::json!({
+            "id": "mock-detail-astryx",
+            "text": "Astryx looks interesting for AI agent workflow, but still need to compare it with Cline.",
+            "media_type": "TEXT",
+            "permalink": "mock://threads/mock-detail-astryx",
+            "timestamp": "2026-07-03T11:00:00Z",
+            "owner": {
+                "id": "mock-owner-astryx",
+                "username": "mock_researcher"
+            }
+        })),
+        other => Err(format!("Mock post detail not found for {other}")),
+    }
 }
 
 // TODO: Add pagination when the exact paging contract and storage strategy are confirmed.

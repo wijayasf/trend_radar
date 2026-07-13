@@ -1,74 +1,48 @@
 # Latest Handoff
 
 Date: 2026-07-13
-Session: 023-discovery-crawler-mvp
+Session: 024-threads-post-detail-fetch
 Agent: Codex
 
 ## Current State
 
-The app now has a discovery-first MVP flow:
+Discovery crawl now handles keyword search responses that only contain Threads post IDs:
 
 1. Run AI Agent Discovery Crawl
-2. Detect Agent Mentions
-3. Classify Regions
-4. Classify Sentiments
-5. Classify Cost Signals
-6. Aggregate Weekly Metrics
-7. Export Markdown Report
-8. Export CSV Metrics
-
-The manual Threads keyword collector remains available for debugging one keyword, but discovery crawl is now the intended research entry point.
+2. Keyword search collects IDs and/or post payloads
+3. ID-only results are resolved through post detail fetch
+4. Raw posts are saved to DuckDB
+5. Entity detection skips posts where text/caption remains unavailable
+6. Classifiers, weekly aggregation, and Markdown/CSV export continue unchanged
 
 ## Completed
 
-- Added `config/discovery_keywords.yml`.
-- Added `discovery_crawler` service and `run_discovery_crawl` command.
-- Added UI section for AI Agent Discovery Crawler.
-- Added sample/mock fallback when real Threads search is unavailable.
-- Added in-crawl deduplication by Threads post ID.
-- Added safe diagnostic for ID-only keyword search responses.
-- Updated sample posts to discovery-style AI Agent posts.
-- Added aliases for Astryx, `astryx.ai`, `ponytail.dev`, and `caveman coding`.
-- Added candidate entity extraction with:
-  - `category = unknown_candidate`
-  - `detection_source = candidate_pattern`
-  - `needs_review = true`
-- Added known alias metadata:
-  - `detection_source = known_alias`
-  - `needs_review = false`
-- Added compatibility migration for `agent_mentions`.
-- Updated README and DuckDB schema docs.
-- Updated targeted full-flow test to start from discovery crawl.
+- Updated keyword search request to use bearer auth and `media_type=TEXT`.
+- Added safe post detail fetch helper for `https://graph.threads.net/v1.0/{post_id}`.
+- Added detail fetch counters to discovery summary:
+  - `detail_fetched_total`
+  - `detail_failed_total`
+  - `id_only_results_count`
+- Added UI display for the new counters.
+- Added `text_missing` to `threads_posts_raw`.
+- Added optional author fields from detail response.
+- Added mock ID-only search and mock detail fetch in tests.
+- Updated full-flow targeted test to validate ID-only search → detail fetch → entity detection → report export.
+- Updated docs and progress logs.
 
-## Validated Counts
+## Validated Mock Counts
 
-Sample/mock discovery full-flow:
-
-- Raw posts: `10`
-- Weekly report total mentions: `18`
-- Total agents detected: `11`
+- Raw posts saved: `3`
+- Detail failed: `0`
+- Weekly report total mentions: `5`
+- Total agents detected: `5`
 - Regions covered: `global`, `indonesia`
-- Known entities confirmed:
+- Entities detected:
   - `Ponytail`
   - `Caveman`
   - `Astryx`
   - `Claude Code`
-  - `Cursor`
-  - `MCP`
   - `Cline`
-  - `Codex CLI`
-- Candidate entity confirmed:
-  - `NovaForge`
-- Sentiment:
-  - Positive: `11`
-  - Neutral: `7`
-  - Negative: `0`
-  - Mixed: `0`
-- Cost:
-  - Not mentioned: `13`
-  - Cost positive: `3`
-  - Cost negative / boros: `2`
-  - Cost mixed: `0`
 
 ## Validation Commands
 
@@ -81,14 +55,13 @@ Sample/mock discovery full-flow:
 
 ## Known Warnings
 
-- Existing Rust warnings remain for placeholder trend models and placeholder Threads trait.
-- Threads real API still requires `threads_keyword_search` permission.
-- ID-only keyword search detail fetch is not implemented yet.
-- Candidate extraction is rule-based and can produce false positives.
+- Existing placeholder Rust warnings remain.
+- `fetch_thread_post_detail` is public for future command/service use but currently reached through internal detail fetch during discovery.
+- Real Threads validation still depends on Meta permission and exact endpoint field availability.
 
 ## Suggested Next Step
 
-Build a candidate review workflow for `unknown_candidate` mentions, then add post detail fetch for ID-only Threads keyword search responses once the official permission/endpoint behavior is available.
+Run manual real Threads discovery crawl once permission is available. If real responses differ from mock assumptions, add a small diagnostics panel for detail fetch response shape.
 
 ## Token Usage
 

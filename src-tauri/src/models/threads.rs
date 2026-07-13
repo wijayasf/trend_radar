@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 pub struct ThreadPostRaw {
     pub post_id: String,
     pub text: String,
+    pub text_missing: bool,
+    pub author_id: Option<String>,
+    pub author_username: Option<String>,
     pub media_type: Option<String>,
     pub permalink: Option<String>,
     pub posted_at: Option<String>,
@@ -45,11 +48,24 @@ pub struct DiscoveryCrawlResult {
     pub mode: String,
     pub seeds_processed: usize,
     pub fetched_total: usize,
+    pub detail_fetched_total: usize,
+    pub detail_failed_total: usize,
     pub saved_total: usize,
     pub duplicates_skipped: usize,
     pub failed_seeds: usize,
+    pub id_only_results_count: usize,
     pub errors: Vec<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThreadsSearchResult {
+    pub posts: Vec<ThreadPostRaw>,
+    pub mode: String,
+    pub id_only_results_count: usize,
+    pub detail_fetched_total: usize,
+    pub detail_failed_total: usize,
+    pub errors: Vec<String>,
 }
 
 impl DiscoveryKeywordGroups {
@@ -100,6 +116,18 @@ pub struct ThreadsApiPost {
     pub permalink: Option<String>,
     #[serde(default)]
     pub timestamp: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub owner: Option<ThreadsApiOwner>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThreadsApiOwner {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,9 +160,19 @@ pub struct ThreadsApiError {
 
 impl ThreadsApiPost {
     pub fn into_raw_post(self, raw_json: String) -> ThreadPostRaw {
+        let text = self.text.or(self.caption).unwrap_or_default();
+        let (author_id, owner_username) = self
+            .owner
+            .map(|owner| (owner.id, owner.username))
+            .unwrap_or((None, None));
+        let author_username = self.username.or(owner_username);
+
         ThreadPostRaw {
             post_id: self.id,
-            text: self.text.or(self.caption).unwrap_or_default(),
+            text_missing: text.trim().is_empty(),
+            text,
+            author_id,
+            author_username,
             media_type: self.media_type,
             permalink: self.permalink,
             posted_at: self.timestamp,
@@ -158,6 +196,9 @@ impl SampleThreadsPost {
         ThreadPostRaw {
             post_id: self.post_id,
             text: self.text,
+            text_missing: false,
+            author_id: None,
+            author_username: None,
             media_type: self.media_type,
             permalink: self.permalink,
             posted_at: self.posted_at,

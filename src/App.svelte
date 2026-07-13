@@ -16,6 +16,9 @@
   let discoveryMaxPerSeed = 10;
   let discoverySeedsProcessed = 0;
   let discoveryFetchedTotal = 0;
+  let discoveryDetailFetchedTotal = 0;
+  let discoveryDetailFailedTotal = 0;
+  let discoveryIdOnlyResultsCount = 0;
   let discoverySavedTotal = 0;
   let discoveryDuplicatesSkipped = 0;
   let discoveryFailedSeeds = 0;
@@ -103,9 +106,12 @@
     mode: string;
     seeds_processed: number;
     fetched_total: number;
+    detail_fetched_total: number;
+    detail_failed_total: number;
     saved_total: number;
     duplicates_skipped: number;
     failed_seeds: number;
+    id_only_results_count: number;
     errors: string[];
     message: string;
   };
@@ -313,6 +319,9 @@
     discoveryStatus = 'Running AI Agent discovery crawl...';
     discoverySeedsProcessed = 0;
     discoveryFetchedTotal = 0;
+    discoveryDetailFetchedTotal = 0;
+    discoveryDetailFailedTotal = 0;
+    discoveryIdOnlyResultsCount = 0;
     discoverySavedTotal = 0;
     discoveryDuplicatesSkipped = 0;
     discoveryFailedSeeds = 0;
@@ -327,6 +336,9 @@
       });
       discoverySeedsProcessed = result.seeds_processed;
       discoveryFetchedTotal = result.fetched_total;
+      discoveryDetailFetchedTotal = result.detail_fetched_total;
+      discoveryDetailFailedTotal = result.detail_failed_total;
+      discoveryIdOnlyResultsCount = result.id_only_results_count;
       discoverySavedTotal = result.saved_total;
       discoveryDuplicatesSkipped = result.duplicates_skipped;
       discoveryFailedSeeds = result.failed_seeds;
@@ -603,6 +615,9 @@
         <span>Mode: {discoveryMode}</span>
         <span>Seeds processed: {discoverySeedsProcessed}</span>
         <span>Fetched total: {discoveryFetchedTotal}</span>
+        <span>ID-only results: {discoveryIdOnlyResultsCount}</span>
+        <span>Detail fetched: {discoveryDetailFetchedTotal}</span>
+        <span>Detail failed: {discoveryDetailFailedTotal}</span>
         <span>Saved total: {discoverySavedTotal}</span>
         <span>Duplicates skipped: {discoveryDuplicatesSkipped}</span>
         <span>Failed seeds: {discoveryFailedSeeds}</span>

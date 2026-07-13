@@ -137,6 +137,8 @@ Run AI Agent Discovery Crawl
 The manual Threads keyword collector remains available for debugging a single keyword.
 Discovery crawl is the primary research flow because it searches broad AI Agent topics first,
 then entity detection extracts specific tools, agents, skills, MCP terms, and candidate names.
+When Threads keyword search returns IDs only, the backend attempts a safe post detail fetch before
+entity detection runs.
 
 ## Project Structure
 

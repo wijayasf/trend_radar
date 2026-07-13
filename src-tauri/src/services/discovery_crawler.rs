@@ -29,15 +29,27 @@ pub fn run_discovery_crawl(
 
     let mut seen_post_ids = HashSet::new();
     let mut fetched_total = 0;
+    let mut detail_fetched_total = 0;
+    let mut detail_failed_total = 0;
+    let mut id_only_results_count = 0;
     let mut duplicates_skipped = 0;
     let mut failed_seeds = 0;
     let mut errors = Vec::new();
     let mut collected_posts = Vec::new();
+    let mut mode = "real_threads".to_string();
 
     for seed in &seeds {
         match threads_client::search_threads_posts_by_keyword(seed) {
-            Ok(posts) => {
-                let limited_posts = posts.into_iter().take(max_per_seed);
+            Ok(search_result) => {
+                mode = merge_mode(&mode, &search_result.mode);
+                detail_fetched_total += search_result.detail_fetched_total;
+                detail_failed_total += search_result.detail_failed_total;
+                id_only_results_count += search_result.id_only_results_count;
+                for error in search_result.errors {
+                    push_error(&mut errors, &error);
+                }
+
+                let limited_posts = search_result.posts.into_iter().take(max_per_seed);
                 for post in limited_posts {
                     fetched_total += 1;
                     if post.post_id.trim().is_empty() {
@@ -50,7 +62,7 @@ pub fn run_discovery_crawl(
                     if post.text.trim().is_empty() {
                         push_error(
                             &mut errors,
-                            "Keyword search returned IDs only; post detail fetch is required for text-based entity detection.",
+                            "Post detail fetched but text is unavailable for this post.",
                         );
                     }
                     collected_posts.push(post);
@@ -75,12 +87,15 @@ pub fn run_discovery_crawl(
 
     Ok(DiscoveryCrawlResult {
         seed_group,
-        mode: "real_threads".to_string(),
+        mode,
         seeds_processed: seeds.len(),
         fetched_total,
+        detail_fetched_total,
+        detail_failed_total,
         saved_total,
         duplicates_skipped,
         failed_seeds,
+        id_only_results_count,
         errors,
         message: format!(
             "Discovery crawl processed {} seeds and saved {} unique posts.",
@@ -116,9 +131,12 @@ fn run_sample_discovery(
         mode: "sample_mock".to_string(),
         seeds_processed: 0,
         fetched_total,
+        detail_fetched_total: 0,
+        detail_failed_total: 0,
         saved_total,
         duplicates_skipped,
         failed_seeds: 0,
+        id_only_results_count: 0,
         errors,
         message: format!(
             "Sample/mock discovery saved {} of {} available sample posts.",
@@ -184,6 +202,16 @@ fn normalize_seed_group(region_seed_group: Option<String>) -> String {
         .map(|group| group.trim().to_lowercase())
         .filter(|group| !group.is_empty())
         .unwrap_or_else(|| DEFAULT_SEED_GROUP.to_string())
+}
+
+fn merge_mode(current: &str, next: &str) -> String {
+    if current == next {
+        current.to_string()
+    } else if current == "real_threads" {
+        next.to_string()
+    } else {
+        "mixed".to_string()
+    }
 }
 
 fn push_error(errors: &mut Vec<String>, error: &str) {

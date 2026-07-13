@@ -21,6 +21,7 @@ Raw local archive of Threads posts collected for trend analysis.
 - `author_id`: Threads author identifier from API data.
 - `author_username`: Display username if available.
 - `text`: Post text.
+- `text_missing`: `true` when keyword/detail response did not provide text or caption.
 - `permalink`: Optional post URL.
 - `media_type`: Optional Threads media type from the API response.
 - `language`: Optional detected or API-provided language.

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS threads_posts_raw (
     author_id TEXT,
     author_username TEXT,
     text TEXT NOT NULL,
+    text_missing BOOLEAN DEFAULT FALSE,
     permalink TEXT,
     media_type TEXT,
     language TEXT,
@@ -36,6 +37,9 @@ CREATE TABLE IF NOT EXISTS threads_posts_raw (
 
 ALTER TABLE threads_posts_raw
     ADD COLUMN IF NOT EXISTS media_type TEXT;
+
+ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS text_missing BOOLEAN DEFAULT FALSE;
 
 ALTER TABLE threads_posts_raw
     ADD COLUMN IF NOT EXISTS region_confidence DOUBLE DEFAULT 0.0;
@@ -199,6 +203,7 @@ INSERT OR REPLACE INTO threads_posts_raw (
     author_id,
     author_username,
     text,
+    text_missing,
     permalink,
     media_type,
     language,
@@ -212,19 +217,20 @@ INSERT OR REPLACE INTO threads_posts_raw (
 ) VALUES (
     ?1,
     NULL,
-    NULL,
-    NULL,
     ?2,
     ?3,
     ?4,
+    ?5,
+    ?6,
+    ?7,
     NULL,
     NULL,
     0,
     0,
     0,
     0,
-    TRY_CAST(?5 AS TIMESTAMP),
-    ?6
+    TRY_CAST(?8 AS TIMESTAMP),
+    ?9
 );
 "#;
 
@@ -563,7 +569,10 @@ pub fn save_threads_raw_posts(posts: &[ThreadPostRaw]) -> Result<usize, String> 
             statement
                 .execute(params![
                     &post.post_id,
+                    &post.author_id,
+                    &post.author_username,
                     &post.text,
+                    post.text_missing,
                     &post.permalink,
                     &post.media_type,
                     &post.posted_at,
