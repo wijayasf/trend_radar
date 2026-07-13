@@ -47,8 +47,12 @@ Normalized entity extraction results derived from raw posts.
 - `confidence`: Numeric confidence from deterministic rules or future classifier.
 - `match_confidence`: Alias/context match confidence from deterministic entity rules.
 - `relevance_score`: Lightweight score for whether the mention appears in an agent/tool context.
-- `sentiment`: Placeholder field for future sentiment classifier; currently `unknown`.
-- `cost_signal`: Placeholder field for future cost classifier; currently `none`.
+- `sentiment`: Rule-based MVP sentiment label: `positive`, `neutral`, `negative`, `mixed`, or `unknown`.
+- `sentiment_confidence`: Rule-based classifier confidence for the sentiment label.
+- `sentiment_reason`: Short explainable reason for the sentiment label.
+- `cost_signal`: Rule-based MVP cost label: `not_mentioned`, `cost_positive`, `cost_negative_boros`, or `cost_mixed`.
+- `cost_confidence`: Rule-based classifier confidence for the cost label.
+- `cost_reason`: Short explainable reason for the cost label.
 - `source_snippet`: Short post text snippet for UI preview and local audit.
 - `detected_at`: Local detection timestamp.
 
@@ -57,9 +61,31 @@ Normalized entity extraction results derived from raw posts.
 Aggregated weekly reporting table.
 
 - Primary key: `week_start`, `region`, `agent_name`.
-- Counts: mentions, unique authors, sentiment counts, and cost-signal counts.
-- `trend_score`: Computed ranking score.
+- `week_start`: Start date of the weekly bucket.
+- `week_end`: End date of the weekly bucket.
+- `region`: `indonesia`, `global`, or `unknown`.
+- `agent_name`: Normalized agent/tool name.
+- `category`: MVP entity category copied from `agent_mentions`.
+- `mentions`: Mention count for the agent/region/week.
+- `mention_count`: Compatibility alias for mention count.
+- `unique_author_count`: Placeholder for future author-aware metrics; currently `0`.
+- Sentiment counts: positive, neutral, negative, and mixed.
+- Cost counts: not mentioned, cost positive, cost negative/boros, and cost mixed.
+- Percentages: positive %, negative %, and cost negative/boros %.
+- `trend_score`: MVP ranking score.
 - `computed_at`: Local computation timestamp.
+
+MVP trend score formula:
+
+```text
+mentions * 10
++ positive_count * 3
++ mixed_count * 1
+- negative_count * 2
+- cost_negative_boros_count * 1
+```
+
+The score formula should move to `config/scoring.yml` when the ranking design stabilizes.
 
 ## Assumptions
 

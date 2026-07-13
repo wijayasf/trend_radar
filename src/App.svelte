@@ -40,6 +40,31 @@
   let unknownCount = 0;
   let regionUpdatedMentions = 0;
   let isClassifyingRegions = false;
+  let sentimentStatus = 'Idle';
+  let sentimentMentionsAnalyzed = 0;
+  let positiveCount = 0;
+  let neutralCount = 0;
+  let negativeCount = 0;
+  let mixedCount = 0;
+  let sentimentUpdatedMentions = 0;
+  let isClassifyingSentiments = false;
+  let costStatus = 'Idle';
+  let costMentionsAnalyzed = 0;
+  let notMentionedCount = 0;
+  let costPositiveCount = 0;
+  let costNegativeBorosCount = 0;
+  let costMixedCount = 0;
+  let costUpdatedMentions = 0;
+  let isClassifyingCostSignals = false;
+  let weeklyStatus = 'Idle';
+  let weeklyMetricsCount = 0;
+  let weeklyIndonesiaCount = 0;
+  let weeklyGlobalCount = 0;
+  let weeklyUnknownCount = 0;
+  let topIndonesia: WeeklyAgentMetric[] = [];
+  let topGlobal: WeeklyAgentMetric[] = [];
+  let topUnknown: WeeklyAgentMetric[] = [];
+  let isAggregatingWeeklyMetrics = false;
 
   type ThreadsCollectionResult = {
     keyword: string;
@@ -60,6 +85,12 @@
     region: string;
     region_confidence: number;
     region_reason: string;
+    sentiment: string;
+    sentiment_confidence: number;
+    sentiment_reason: string;
+    cost_signal: string;
+    cost_confidence: number;
+    cost_reason: string;
     confidence: number;
     source_snippet: string;
   };
@@ -70,6 +101,61 @@
     saved_count: number;
     message: string;
     preview: AgentMentionPreview[];
+  };
+
+  type SentimentClassificationResult = {
+    mentions_analyzed: number;
+    positive_count: number;
+    neutral_count: number;
+    negative_count: number;
+    mixed_count: number;
+    updated_mentions_count: number;
+    message: string;
+    preview: AgentMentionPreview[];
+  };
+
+  type CostClassificationResult = {
+    mentions_analyzed: number;
+    not_mentioned_count: number;
+    cost_positive_count: number;
+    cost_negative_boros_count: number;
+    cost_mixed_count: number;
+    updated_mentions_count: number;
+    message: string;
+    preview: AgentMentionPreview[];
+  };
+
+  type WeeklyAgentMetric = {
+    rank: number;
+    week_start: string;
+    week_end: string;
+    region: string;
+    agent_name: string;
+    category: string;
+    mentions: number;
+    positive_count: number;
+    neutral_count: number;
+    negative_count: number;
+    mixed_count: number;
+    cost_not_mentioned_count: number;
+    cost_positive_count: number;
+    cost_negative_boros_count: number;
+    cost_mixed_count: number;
+    positive_pct: number;
+    negative_pct: number;
+    cost_negative_boros_pct: number;
+    trend_score: number;
+  };
+
+  type WeeklyAggregationResult = {
+    metrics_count: number;
+    indonesia_count: number;
+    global_count: number;
+    unknown_count: number;
+    top_indonesia: WeeklyAgentMetric[];
+    top_global: WeeklyAgentMetric[];
+    top_unknown: WeeklyAgentMetric[];
+    message: string;
   };
 
   type RegionClassificationResult = {
@@ -240,6 +326,94 @@
       isClassifyingRegions = false;
     }
   }
+
+  async function classifySentiments() {
+    if (isClassifyingSentiments) return;
+
+    isClassifyingSentiments = true;
+    sentimentStatus = 'Classifying sentiments...';
+    sentimentMentionsAnalyzed = 0;
+    positiveCount = 0;
+    neutralCount = 0;
+    negativeCount = 0;
+    mixedCount = 0;
+    sentimentUpdatedMentions = 0;
+
+    try {
+      const result = await invoke<SentimentClassificationResult>('classify_sentiments');
+      sentimentMentionsAnalyzed = result.mentions_analyzed;
+      positiveCount = result.positive_count;
+      neutralCount = result.neutral_count;
+      negativeCount = result.negative_count;
+      mixedCount = result.mixed_count;
+      sentimentUpdatedMentions = result.updated_mentions_count;
+      detectionPreview = result.preview;
+      sentimentStatus = result.message;
+    } catch (error) {
+      sentimentStatus = `error: ${String(error)}`;
+    } finally {
+      isClassifyingSentiments = false;
+    }
+  }
+
+  async function classifyCostSignals() {
+    if (isClassifyingCostSignals) return;
+
+    isClassifyingCostSignals = true;
+    costStatus = 'Classifying cost signals...';
+    costMentionsAnalyzed = 0;
+    notMentionedCount = 0;
+    costPositiveCount = 0;
+    costNegativeBorosCount = 0;
+    costMixedCount = 0;
+    costUpdatedMentions = 0;
+
+    try {
+      const result = await invoke<CostClassificationResult>('classify_cost_signals');
+      costMentionsAnalyzed = result.mentions_analyzed;
+      notMentionedCount = result.not_mentioned_count;
+      costPositiveCount = result.cost_positive_count;
+      costNegativeBorosCount = result.cost_negative_boros_count;
+      costMixedCount = result.cost_mixed_count;
+      costUpdatedMentions = result.updated_mentions_count;
+      detectionPreview = result.preview;
+      costStatus = result.message;
+    } catch (error) {
+      costStatus = `error: ${String(error)}`;
+    } finally {
+      isClassifyingCostSignals = false;
+    }
+  }
+
+  async function aggregateWeeklyMetrics() {
+    if (isAggregatingWeeklyMetrics) return;
+
+    isAggregatingWeeklyMetrics = true;
+    weeklyStatus = 'Aggregating weekly metrics...';
+    weeklyMetricsCount = 0;
+    weeklyIndonesiaCount = 0;
+    weeklyGlobalCount = 0;
+    weeklyUnknownCount = 0;
+    topIndonesia = [];
+    topGlobal = [];
+    topUnknown = [];
+
+    try {
+      const result = await invoke<WeeklyAggregationResult>('aggregate_weekly_metrics');
+      weeklyMetricsCount = result.metrics_count;
+      weeklyIndonesiaCount = result.indonesia_count;
+      weeklyGlobalCount = result.global_count;
+      weeklyUnknownCount = result.unknown_count;
+      topIndonesia = result.top_indonesia;
+      topGlobal = result.top_global;
+      topUnknown = result.top_unknown;
+      weeklyStatus = result.message;
+    } catch (error) {
+      weeklyStatus = `error: ${String(error)}`;
+    } finally {
+      isAggregatingWeeklyMetrics = false;
+    }
+  }
 </script>
 
 <main class="app-shell">
@@ -266,7 +440,7 @@
                 : index === 2
                   ? collectStatus
                   : index === 3
-                    ? `${detectStatus} / ${regionStatus}`
+                    ? `${detectStatus} / ${regionStatus} / ${sentimentStatus} / ${costStatus} / ${weeklyStatus}`
                     : 'Planned'}
           </p>
         </article>
@@ -345,6 +519,18 @@
                     ? ` (${Math.round(mention.region_confidence * 100)}%)`
                     : ''}
                 </span>
+                <span>
+                  {mention.sentiment}
+                  {mention.sentiment_confidence > 0
+                    ? ` (${Math.round(mention.sentiment_confidence * 100)}%)`
+                    : ''}
+                </span>
+                <span>
+                  {mention.cost_signal}
+                  {mention.cost_confidence > 0
+                    ? ` (${Math.round(mention.cost_confidence * 100)}%)`
+                    : ''}
+                </span>
               </div>
               <p>{mention.source_snippet}</p>
               <span class="confidence">{Math.round(mention.confidence * 100)}%</span>
@@ -374,5 +560,137 @@
         <span>Mentions updated: {regionUpdatedMentions}</span>
       </div>
     </section>
+
+    <section class="detector-panel" aria-label="Sentiment classifier">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">Sentiment classifier</p>
+          <h2>Classify Sentiments</h2>
+        </div>
+        <button
+          type="button"
+          on:click={classifySentiments}
+          disabled={isClassifyingSentiments}
+        >
+          {isClassifyingSentiments ? 'Classifying' : 'Classify Sentiments'}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {sentimentStatus}</span>
+        <span>Mentions analyzed: {sentimentMentionsAnalyzed}</span>
+        <span>Positive: {positiveCount}</span>
+        <span>Neutral: {neutralCount}</span>
+        <span>Negative: {negativeCount}</span>
+        <span>Mixed: {mixedCount}</span>
+        <span>Mentions updated: {sentimentUpdatedMentions}</span>
+      </div>
+    </section>
+
+    <section class="detector-panel" aria-label="Cost signal classifier">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">Cost signal classifier</p>
+          <h2>Classify Cost Signals</h2>
+        </div>
+        <button
+          type="button"
+          on:click={classifyCostSignals}
+          disabled={isClassifyingCostSignals}
+        >
+          {isClassifyingCostSignals ? 'Classifying' : 'Classify Cost Signals'}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {costStatus}</span>
+        <span>Mentions analyzed: {costMentionsAnalyzed}</span>
+        <span>Not mentioned: {notMentionedCount}</span>
+        <span>Cost positive: {costPositiveCount}</span>
+        <span>Cost negative/boros: {costNegativeBorosCount}</span>
+        <span>Cost mixed: {costMixedCount}</span>
+        <span>Mentions updated: {costUpdatedMentions}</span>
+      </div>
+    </section>
+
+    <section class="detector-panel" aria-label="Weekly trend metrics">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">Weekly trend metrics</p>
+          <h2>Aggregate Weekly Metrics</h2>
+        </div>
+        <button
+          type="button"
+          on:click={aggregateWeeklyMetrics}
+          disabled={isAggregatingWeeklyMetrics}
+        >
+          {isAggregatingWeeklyMetrics ? 'Aggregating' : 'Aggregate Weekly Metrics'}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {weeklyStatus}</span>
+        <span>Metric rows: {weeklyMetricsCount}</span>
+        <span>Indonesia rows: {weeklyIndonesiaCount}</span>
+        <span>Global rows: {weeklyGlobalCount}</span>
+        <span>Unknown rows: {weeklyUnknownCount}</span>
+      </div>
+
+      <div class="metrics-groups">
+        <div>
+          <h3>Top Indonesia</h3>
+          {@render MetricTable(topIndonesia)}
+        </div>
+        <div>
+          <h3>Top Global</h3>
+          {@render MetricTable(topGlobal)}
+        </div>
+        {#if topUnknown.length > 0}
+          <div>
+            <h3>Top Unknown</h3>
+            {@render MetricTable(topUnknown)}
+          </div>
+        {/if}
+      </div>
+    </section>
   </section>
 </main>
+
+{#snippet MetricTable(metrics: WeeklyAgentMetric[])}
+  {#if metrics.length > 0}
+    <div class="metrics-table-wrap">
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Agent</th>
+            <th>Category</th>
+            <th>Region</th>
+            <th>Mentions</th>
+            <th>Positive %</th>
+            <th>Negative %</th>
+            <th>Boros %</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each metrics as metric}
+            <tr>
+              <td>{metric.rank}</td>
+              <td>{metric.agent_name}</td>
+              <td>{metric.category}</td>
+              <td>{metric.region}</td>
+              <td>{metric.mentions}</td>
+              <td>{metric.positive_pct.toFixed(1)}</td>
+              <td>{metric.negative_pct.toFixed(1)}</td>
+              <td>{metric.cost_negative_boros_pct.toFixed(1)}</td>
+              <td>{metric.trend_score.toFixed(1)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <p class="empty-state">No metrics yet.</p>
+  {/if}
+{/snippet}

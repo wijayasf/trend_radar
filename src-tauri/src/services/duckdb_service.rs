@@ -5,9 +5,11 @@ use duckdb::params;
 use duckdb::Connection;
 
 use crate::models::entities::{
-    AgentMentionPreview, DetectedAgentMention, RawPostForDetection, RegionClassification,
+    AgentMentionForCost, AgentMentionForSentiment, AgentMentionPreview, CostClassification,
+    DetectedAgentMention, RawPostForDetection, RegionClassification, SentimentClassification,
 };
 use crate::models::threads::ThreadPostRaw;
+use crate::models::trend::WeeklyAgentMetric;
 use crate::utils::config;
 
 const SCHEMA_SQL: &str = r#"
@@ -52,7 +54,11 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
     match_confidence DOUBLE DEFAULT 0.0,
     relevance_score DOUBLE DEFAULT 0.0,
     sentiment TEXT DEFAULT 'unknown',
+    sentiment_confidence DOUBLE DEFAULT 0.0,
+    sentiment_reason TEXT,
     cost_signal TEXT DEFAULT 'none',
+    cost_confidence DOUBLE DEFAULT 0.0,
+    cost_reason TEXT,
     source_snippet TEXT,
     region_confidence DOUBLE DEFAULT 0.0,
     region_reason TEXT,
@@ -84,7 +90,19 @@ ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS sentiment TEXT DEFAULT 'unknown';
 
 ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS sentiment_confidence DOUBLE DEFAULT 0.0;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS sentiment_reason TEXT;
+
+ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS cost_signal TEXT DEFAULT 'none';
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS cost_confidence DOUBLE DEFAULT 0.0;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS cost_reason TEXT;
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS source_snippet TEXT;
@@ -97,23 +115,63 @@ ALTER TABLE agent_mentions
 
 CREATE TABLE IF NOT EXISTS weekly_agent_metrics (
     week_start DATE NOT NULL,
+    week_end DATE,
     region TEXT NOT NULL,
     agent_name TEXT NOT NULL,
+    category TEXT DEFAULT 'unknown',
+    mentions BIGINT DEFAULT 0,
     mention_count BIGINT DEFAULT 0,
     unique_author_count BIGINT DEFAULT 0,
     positive_count BIGINT DEFAULT 0,
     negative_count BIGINT DEFAULT 0,
     neutral_count BIGINT DEFAULT 0,
     mixed_count BIGINT DEFAULT 0,
+    cost_not_mentioned_count BIGINT DEFAULT 0,
+    cost_positive_count BIGINT DEFAULT 0,
+    cost_negative_boros_count BIGINT DEFAULT 0,
+    cost_mixed_count BIGINT DEFAULT 0,
     cost_expensive_count BIGINT DEFAULT 0,
     cost_token_heavy_count BIGINT DEFAULT 0,
     cost_quota_limited_count BIGINT DEFAULT 0,
     cost_worth_it_count BIGINT DEFAULT 0,
+    positive_pct DOUBLE DEFAULT 0.0,
+    negative_pct DOUBLE DEFAULT 0.0,
+    cost_negative_boros_pct DOUBLE DEFAULT 0.0,
     trend_score DOUBLE DEFAULT 0.0,
     computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (week_start, region, agent_name),
-    CHECK (region IN ('indonesia', 'global'))
+    CHECK (region IN ('indonesia', 'global', 'unknown'))
 );
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS week_end DATE;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'unknown';
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS mentions BIGINT DEFAULT 0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS cost_not_mentioned_count BIGINT DEFAULT 0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS cost_positive_count BIGINT DEFAULT 0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS cost_negative_boros_count BIGINT DEFAULT 0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS cost_mixed_count BIGINT DEFAULT 0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS positive_pct DOUBLE DEFAULT 0.0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS negative_pct DOUBLE DEFAULT 0.0;
+
+ALTER TABLE weekly_agent_metrics
+    ADD COLUMN IF NOT EXISTS cost_negative_boros_pct DOUBLE DEFAULT 0.0;
 
 CREATE INDEX IF NOT EXISTS idx_threads_posts_raw_posted_at
     ON threads_posts_raw(posted_at);
@@ -207,6 +265,146 @@ SET
     region_confidence = ?3,
     region_reason = ?4
 WHERE post_id = ?1;
+"#;
+
+const AGENT_MENTION_SENTIMENT_UPDATE_SQL: &str = r#"
+UPDATE agent_mentions
+SET
+    sentiment = ?2,
+    sentiment_confidence = ?3,
+    sentiment_reason = ?4
+WHERE mention_id = ?1;
+"#;
+
+const AGENT_MENTION_COST_UPDATE_SQL: &str = r#"
+UPDATE agent_mentions
+SET
+    cost_signal = ?2,
+    cost_confidence = ?3,
+    cost_reason = ?4
+WHERE mention_id = ?1;
+"#;
+
+const WEEKLY_AGENT_METRICS_RECREATE_SQL: &str = r#"
+DROP TABLE IF EXISTS weekly_agent_metrics;
+
+CREATE TABLE weekly_agent_metrics (
+    week_start DATE NOT NULL,
+    week_end DATE NOT NULL,
+    region TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    category TEXT DEFAULT 'unknown',
+    mentions BIGINT DEFAULT 0,
+    mention_count BIGINT DEFAULT 0,
+    unique_author_count BIGINT DEFAULT 0,
+    positive_count BIGINT DEFAULT 0,
+    neutral_count BIGINT DEFAULT 0,
+    negative_count BIGINT DEFAULT 0,
+    mixed_count BIGINT DEFAULT 0,
+    cost_not_mentioned_count BIGINT DEFAULT 0,
+    cost_positive_count BIGINT DEFAULT 0,
+    cost_negative_boros_count BIGINT DEFAULT 0,
+    cost_mixed_count BIGINT DEFAULT 0,
+    cost_expensive_count BIGINT DEFAULT 0,
+    cost_token_heavy_count BIGINT DEFAULT 0,
+    cost_quota_limited_count BIGINT DEFAULT 0,
+    cost_worth_it_count BIGINT DEFAULT 0,
+    positive_pct DOUBLE DEFAULT 0.0,
+    negative_pct DOUBLE DEFAULT 0.0,
+    cost_negative_boros_pct DOUBLE DEFAULT 0.0,
+    trend_score DOUBLE DEFAULT 0.0,
+    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (week_start, region, agent_name),
+    CHECK (region IN ('indonesia', 'global', 'unknown'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_agent_metrics_region_score
+    ON weekly_agent_metrics(region, trend_score);
+"#;
+
+const WEEKLY_AGENT_METRICS_INSERT_SQL: &str = r#"
+INSERT INTO weekly_agent_metrics (
+    week_start,
+    week_end,
+    region,
+    agent_name,
+    category,
+    mentions,
+    mention_count,
+    unique_author_count,
+    positive_count,
+    neutral_count,
+    negative_count,
+    mixed_count,
+    cost_not_mentioned_count,
+    cost_positive_count,
+    cost_negative_boros_count,
+    cost_mixed_count,
+    positive_pct,
+    negative_pct,
+    cost_negative_boros_pct,
+    trend_score
+)
+WITH base AS (
+    SELECT
+        CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)
+            - CAST(((EXTRACT(dow FROM CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)) + 6) % 7) AS INTEGER)
+            AS week_start,
+        COALESCE(m.region, 'unknown') AS region,
+        m.agent_name,
+        COALESCE(m.category, 'unknown') AS category,
+        COALESCE(m.sentiment, 'unknown') AS sentiment,
+        COALESCE(m.cost_signal, 'not_mentioned') AS cost_signal
+    FROM agent_mentions m
+    JOIN threads_posts_raw p ON p.post_id = m.post_id
+    WHERE m.agent_name IS NOT NULL AND length(trim(m.agent_name)) > 0
+),
+grouped AS (
+    SELECT
+        week_start,
+        CAST(week_start + INTERVAL 6 DAY AS DATE) AS week_end,
+        region,
+        agent_name,
+        category,
+        COUNT(*) AS mentions,
+        SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive_count,
+        SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) AS neutral_count,
+        SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative_count,
+        SUM(CASE WHEN sentiment = 'mixed' THEN 1 ELSE 0 END) AS mixed_count,
+        SUM(CASE WHEN cost_signal IN ('not_mentioned', 'none') THEN 1 ELSE 0 END) AS cost_not_mentioned_count,
+        SUM(CASE WHEN cost_signal = 'cost_positive' THEN 1 ELSE 0 END) AS cost_positive_count,
+        SUM(CASE WHEN cost_signal = 'cost_negative_boros' THEN 1 ELSE 0 END) AS cost_negative_boros_count,
+        SUM(CASE WHEN cost_signal = 'cost_mixed' THEN 1 ELSE 0 END) AS cost_mixed_count
+    FROM base
+    GROUP BY week_start, week_end, region, agent_name, category
+)
+SELECT
+    week_start,
+    week_end,
+    region,
+    agent_name,
+    category,
+    mentions,
+    mentions AS mention_count,
+    0 AS unique_author_count,
+    positive_count,
+    neutral_count,
+    negative_count,
+    mixed_count,
+    cost_not_mentioned_count,
+    cost_positive_count,
+    cost_negative_boros_count,
+    cost_mixed_count,
+    ROUND(100.0 * positive_count / mentions, 2) AS positive_pct,
+    ROUND(100.0 * negative_count / mentions, 2) AS negative_pct,
+    ROUND(100.0 * cost_negative_boros_count / mentions, 2) AS cost_negative_boros_pct,
+    -- TODO: Move MVP trend scoring weights to config/scoring.yml when scoring stabilizes.
+    (mentions * 10)
+        + (positive_count * 3)
+        + (mixed_count * 1)
+        - (negative_count * 2)
+        - (cost_negative_boros_count * 1) AS trend_score
+FROM grouped;
 "#;
 
 pub fn configured_database_path() -> Result<PathBuf, String> {
@@ -425,6 +623,157 @@ pub fn save_region_classifications(
     Ok(updated_mentions_count)
 }
 
+pub fn load_agent_mentions_for_sentiment() -> Result<Vec<AgentMentionForSentiment>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT mention_id, COALESCE(source_snippet, '')
+            FROM agent_mentions
+            WHERE mention_id IS NOT NULL AND length(trim(mention_id)) > 0
+            ORDER BY detected_at DESC
+            LIMIT 5000
+            "#,
+        )
+        .map_err(|error| format!("DuckDB sentiment mention query preparation failed: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AgentMentionForSentiment {
+                mention_id: row.get(0)?,
+                source_snippet: row.get(1)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB sentiment mention query failed: {error}"))?;
+
+    let mut mentions = Vec::new();
+    for row in rows {
+        mentions.push(
+            row.map_err(|error| format!("DuckDB sentiment mention row read failed: {error}"))?,
+        );
+    }
+
+    Ok(mentions)
+}
+
+pub fn save_sentiment_classifications(
+    classifications: &[SentimentClassification],
+) -> Result<usize, String> {
+    if classifications.is_empty() {
+        return Ok(0);
+    }
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB transaction failed: {error}"))?;
+
+    let mut updated_mentions_count = 0;
+    {
+        let mut statement = transaction
+            .prepare(AGENT_MENTION_SENTIMENT_UPDATE_SQL)
+            .map_err(|error| {
+                format!("DuckDB mention sentiment update preparation failed: {error}")
+            })?;
+
+        for classification in classifications {
+            if classification.mention_id.trim().is_empty() {
+                continue;
+            }
+
+            updated_mentions_count += statement
+                .execute(params![
+                    &classification.mention_id,
+                    &classification.sentiment,
+                    classification.sentiment_confidence,
+                    &classification.sentiment_reason,
+                ])
+                .map_err(|error| format!("DuckDB mention sentiment update failed: {error}"))?;
+        }
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB transaction commit failed: {error}"))?;
+
+    Ok(updated_mentions_count)
+}
+
+pub fn load_agent_mentions_for_cost() -> Result<Vec<AgentMentionForCost>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT mention_id, COALESCE(source_snippet, '')
+            FROM agent_mentions
+            WHERE mention_id IS NOT NULL AND length(trim(mention_id)) > 0
+            ORDER BY detected_at DESC
+            LIMIT 5000
+            "#,
+        )
+        .map_err(|error| format!("DuckDB cost mention query preparation failed: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AgentMentionForCost {
+                mention_id: row.get(0)?,
+                source_snippet: row.get(1)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB cost mention query failed: {error}"))?;
+
+    let mut mentions = Vec::new();
+    for row in rows {
+        mentions
+            .push(row.map_err(|error| format!("DuckDB cost mention row read failed: {error}"))?);
+    }
+
+    Ok(mentions)
+}
+
+pub fn save_cost_classifications(classifications: &[CostClassification]) -> Result<usize, String> {
+    if classifications.is_empty() {
+        return Ok(0);
+    }
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB transaction failed: {error}"))?;
+
+    let mut updated_mentions_count = 0;
+    {
+        let mut statement = transaction
+            .prepare(AGENT_MENTION_COST_UPDATE_SQL)
+            .map_err(|error| format!("DuckDB mention cost update preparation failed: {error}"))?;
+
+        for classification in classifications {
+            if classification.mention_id.trim().is_empty() {
+                continue;
+            }
+
+            updated_mentions_count += statement
+                .execute(params![
+                    &classification.mention_id,
+                    &classification.cost_signal,
+                    classification.cost_confidence,
+                    &classification.cost_reason,
+                ])
+                .map_err(|error| format!("DuckDB mention cost update failed: {error}"))?;
+        }
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB transaction commit failed: {error}"))?;
+
+    Ok(updated_mentions_count)
+}
+
 pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPreview>, String> {
     let database_path = initialize_database()?;
     let connection = open_connection(&database_path)?;
@@ -437,6 +786,12 @@ pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPrevi
                 region,
                 COALESCE(region_confidence, 0.0),
                 COALESCE(region_reason, ''),
+                sentiment,
+                COALESCE(sentiment_confidence, 0.0),
+                COALESCE(sentiment_reason, ''),
+                cost_signal,
+                COALESCE(cost_confidence, 0.0),
+                COALESCE(cost_reason, ''),
                 match_confidence,
                 COALESCE(source_snippet, '')
             FROM agent_mentions
@@ -454,8 +809,14 @@ pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPrevi
                 region: row.get(2)?,
                 region_confidence: row.get(3)?,
                 region_reason: row.get(4)?,
-                confidence: row.get(5)?,
-                source_snippet: row.get(6)?,
+                sentiment: row.get(5)?,
+                sentiment_confidence: row.get(6)?,
+                sentiment_reason: row.get(7)?,
+                cost_signal: row.get(8)?,
+                cost_confidence: row.get(9)?,
+                cost_reason: row.get(10)?,
+                confidence: row.get(11)?,
+                source_snippet: row.get(12)?,
             })
         })
         .map_err(|error| format!("DuckDB mention preview query failed: {error}"))?;
@@ -469,10 +830,109 @@ pub fn load_agent_mentions_preview(limit: usize) -> Result<Vec<AgentMentionPrevi
     Ok(preview)
 }
 
+pub fn rebuild_weekly_agent_metrics() -> Result<usize, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+
+    connection
+        .execute_batch(WEEKLY_AGENT_METRICS_RECREATE_SQL)
+        .map_err(|error| format!("DuckDB weekly metrics table rebuild failed: {error}"))?;
+
+    connection
+        .execute(WEEKLY_AGENT_METRICS_INSERT_SQL, [])
+        .map_err(|error| format!("DuckDB weekly metrics aggregation failed: {error}"))?;
+
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM weekly_agent_metrics", [], |row| {
+            row.get(0)
+        })
+        .map_err(|error| format!("DuckDB weekly metrics count query failed: {error}"))?;
+
+    usize::try_from(count)
+        .map_err(|error| format!("DuckDB weekly metrics count is invalid: {error}"))
+}
+
+pub fn load_weekly_agent_metrics_by_region(
+    region: &str,
+    limit: usize,
+) -> Result<Vec<WeeklyAgentMetric>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                CAST(week_start AS VARCHAR),
+                CAST(week_end AS VARCHAR),
+                region,
+                agent_name,
+                category,
+                mentions,
+                positive_count,
+                neutral_count,
+                negative_count,
+                mixed_count,
+                cost_not_mentioned_count,
+                cost_positive_count,
+                cost_negative_boros_count,
+                cost_mixed_count,
+                positive_pct,
+                negative_pct,
+                cost_negative_boros_pct,
+                trend_score
+            FROM weekly_agent_metrics
+            WHERE region = ?1
+            ORDER BY trend_score DESC, mentions DESC, agent_name ASC
+            LIMIT ?2
+            "#,
+        )
+        .map_err(|error| format!("DuckDB weekly metrics query preparation failed: {error}"))?;
+
+    let rows = statement
+        .query_map(params![region, limit], |row| {
+            Ok(WeeklyAgentMetric {
+                rank: 0,
+                week_start: row.get(0)?,
+                week_end: row.get(1)?,
+                region: row.get(2)?,
+                agent_name: row.get(3)?,
+                category: row.get(4)?,
+                mentions: i64_to_usize(row.get(5)?)?,
+                positive_count: i64_to_usize(row.get(6)?)?,
+                neutral_count: i64_to_usize(row.get(7)?)?,
+                negative_count: i64_to_usize(row.get(8)?)?,
+                mixed_count: i64_to_usize(row.get(9)?)?,
+                cost_not_mentioned_count: i64_to_usize(row.get(10)?)?,
+                cost_positive_count: i64_to_usize(row.get(11)?)?,
+                cost_negative_boros_count: i64_to_usize(row.get(12)?)?,
+                cost_mixed_count: i64_to_usize(row.get(13)?)?,
+                positive_pct: row.get(14)?,
+                negative_pct: row.get(15)?,
+                cost_negative_boros_pct: row.get(16)?,
+                trend_score: row.get(17)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB weekly metrics query failed: {error}"))?;
+
+    let mut metrics = Vec::new();
+    for row in rows {
+        let mut metric =
+            row.map_err(|error| format!("DuckDB weekly metrics row read failed: {error}"))?;
+        metric.rank = metrics.len() + 1;
+        metrics.push(metric);
+    }
+
+    Ok(metrics)
+}
+
 fn initialize_database_at(database_path: &Path) -> Result<(), String> {
     ensure_parent_directory(database_path)?;
     let connection = open_connection(database_path)?;
     run_schema_initialization(&connection)
+}
+
+fn i64_to_usize(value: i64) -> Result<usize, duckdb::Error> {
+    usize::try_from(value).map_err(|error| duckdb::Error::ToSqlConversionFailure(Box::new(error)))
 }
 
 fn run_schema_initialization(connection: &Connection) -> Result<(), String> {

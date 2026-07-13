@@ -1,5 +1,8 @@
+pub mod cost_classifier;
 pub mod duckdb_service;
 pub mod entity_detector;
 pub mod region_classifier;
+pub mod sentiment_classifier;
 pub mod threads;
 pub mod threads_client;
+pub mod weekly_aggregator;

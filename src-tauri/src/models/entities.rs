@@ -33,6 +33,34 @@ pub struct RegionClassification {
 }
 
 #[derive(Debug, Clone)]
+pub struct AgentMentionForSentiment {
+    pub mention_id: String,
+    pub source_snippet: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SentimentClassification {
+    pub mention_id: String,
+    pub sentiment: String,
+    pub sentiment_confidence: f64,
+    pub sentiment_reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentMentionForCost {
+    pub mention_id: String,
+    pub source_snippet: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CostClassification {
+    pub mention_id: String,
+    pub cost_signal: String,
+    pub cost_confidence: f64,
+    pub cost_reason: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct DetectedAgentMention {
     pub mention_id: String,
     pub post_id: String,
@@ -55,6 +83,12 @@ pub struct AgentMentionPreview {
     pub region: String,
     pub region_confidence: f64,
     pub region_reason: String,
+    pub sentiment: String,
+    pub sentiment_confidence: f64,
+    pub sentiment_reason: String,
+    pub cost_signal: String,
+    pub cost_confidence: f64,
+    pub cost_reason: String,
     pub confidence: f64,
     pub source_snippet: String,
 }
@@ -79,6 +113,30 @@ pub struct RegionClassificationResult {
     pub preview: Vec<AgentMentionPreview>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SentimentClassificationResult {
+    pub mentions_analyzed: usize,
+    pub positive_count: usize,
+    pub neutral_count: usize,
+    pub negative_count: usize,
+    pub mixed_count: usize,
+    pub updated_mentions_count: usize,
+    pub message: String,
+    pub preview: Vec<AgentMentionPreview>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CostClassificationResult {
+    pub mentions_analyzed: usize,
+    pub not_mentioned_count: usize,
+    pub cost_positive_count: usize,
+    pub cost_negative_boros_count: usize,
+    pub cost_mixed_count: usize,
+    pub updated_mentions_count: usize,
+    pub message: String,
+    pub preview: Vec<AgentMentionPreview>,
+}
+
 impl From<&DetectedAgentMention> for AgentMentionPreview {
     fn from(mention: &DetectedAgentMention) -> Self {
         Self {
@@ -87,6 +145,12 @@ impl From<&DetectedAgentMention> for AgentMentionPreview {
             region: mention.region.clone(),
             region_confidence: 0.0,
             region_reason: "not classified".to_string(),
+            sentiment: mention.sentiment.clone(),
+            sentiment_confidence: 0.0,
+            sentiment_reason: "not classified".to_string(),
+            cost_signal: mention.cost_signal.clone(),
+            cost_confidence: 0.0,
+            cost_reason: "not classified".to_string(),
             confidence: mention.match_confidence,
             source_snippet: mention.source_snippet.clone(),
         }

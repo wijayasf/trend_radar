@@ -1,21 +1,21 @@
 [
   {
     "post_id": "sample-threads-001",
-    "text": "Claude Code boros token tapi ngebantu debug repo, anak dev indo mulai pakai.",
+    "text": "Claude Code bagus tapi boros token buat debug repo, anak dev indo mulai pakai.",
     "media_type": "TEXT",
     "permalink": "sample://threads/sample-threads-001",
     "posted_at": "2026-07-01T09:00:00Z"
   },
   {
     "post_id": "sample-threads-002",
-    "text": "Cursor AI feels fast for pair programming, especially when the codebase context is clean.",
+    "text": "Cursor AI feels faster, useful, and affordable for pair programming when the codebase context is clean.",
     "media_type": "TEXT",
     "permalink": "sample://threads/sample-threads-002",
     "posted_at": "2026-07-01T10:00:00Z"
   },
   {
     "post_id": "sample-threads-003",
-    "text": "Di Jakarta, GitHub Copilot masih kepakai buat autocomplete tim developer Indonesia.",
+    "text": "Di Jakarta, GitHub Copilot sering error, lambat, dan mahal banget buat autocomplete tim developer Indonesia.",
     "media_type": "TEXT",
     "permalink": "sample://threads/sample-threads-003",
     "posted_at": "2026-07-02T08:30:00Z"
@@ -29,7 +29,7 @@
   },
   {
     "post_id": "sample-threads-005",
-    "text": "Cavemen mode cocok buat kantor gue di Bandung biar agent change tetap kecil.",
+    "text": "Cavemen mode bagus tapi kadang ngaco buat kantor gue di Bandung.",
     "media_type": "TEXT",
     "permalink": "sample://threads/sample-threads-005",
     "posted_at": "2026-07-03T07:15:00Z"
@@ -43,7 +43,7 @@
   },
   {
     "post_id": "sample-threads-007",
-    "text": "ExplainX has many AI agent skills and makes discovery easier for internal workflows.",
+    "text": "ExplainX is useful and helps discovery for internal AI agent workflows.",
     "media_type": "TEXT",
     "permalink": "sample://threads/sample-threads-007",
     "posted_at": "2026-07-04T09:40:00Z"
