@@ -151,10 +151,22 @@ The desktop UI includes guided demo controls:
 Candidate review remains manual so new or unknown entities are not approved automatically.
 Long-running actions show disabled buttons, loading labels, and a compact spinner so demo state is visible while the local pipeline runs.
 
+## Review Web Demo
+
+A lightweight web demo is available under `apps/review-web` for Threads App Review demonstration. It uses server-side environment variables and does not expose access tokens to the browser.
+
+Render deployment:
+
+- Root Directory: `apps/review-web`
+- Build command: `npm install`
+- Start command: `npm start`
+- Environment variables: `THREADS_ACCESS_TOKEN`, `THREADS_USER_ID`, `APP_ENV=review`
+
 ## Project Structure
 
 ```text
 .
+├── apps/review-web/      # Public web demo for Threads App Review
 ├── src/                  # Svelte / TypeScript frontend
 ├── src-tauri/            # Rust / Tauri backend
 ├── config/               # Keywords, aliases, and scoring config

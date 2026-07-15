@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Agent Trend Radar Review Web Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">Threads App Review Demo</p>
+        <h1>AI Agent Trend Radar — Review Web Demo</h1>
+        <p>
+          This demo shows how the app uses Threads keyword search to discover AI Agent discussion
+          signals, fetch post details, preview entity detection, and report safe diagnostics.
+        </p>
+      </header>
+
+      <section class="panel" aria-labelledby="health-title">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-label">Health</p>
+            <h2 id="health-title">Server Configuration</h2>
+          </div>
+          <button id="refresh-health" type="button">Refresh Health</button>
+        </div>
+        <div id="health-cards" class="card-grid"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="seed-title">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-label">Single Seed Test</p>
+            <h2 id="seed-title">Test Threads Keyword Search</h2>
+          </div>
+        </div>
+        <form id="seed-form" class="control-row">
+          <input id="seed-keyword" name="keyword" value="AI Agent" autocomplete="off" />
+          <button id="seed-button" type="submit">Test Seed</button>
+        </form>
+        <div id="seed-result" class="result-box"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="crawl-title">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-label">Discovery Crawl Demo</p>
+            <h2 id="crawl-title">Run Multi-Seed Discovery</h2>
+          </div>
+        </div>
+        <form id="crawl-form" class="stack">
+          <label for="seed-list">Seeds</label>
+          <textarea id="seed-list" rows="5">AI Agent
+Ponytail
+Cavemen
+Astryx
+Claude Code</textarea>
+          <label for="max-per-seed">Max per seed</label>
+          <div class="control-row">
+            <input id="max-per-seed" type="number" min="1" max="10" value="3" />
+            <button id="crawl-button" type="submit">Run Discovery Crawl</button>
+          </div>
+        </form>
+        <div id="crawl-result" class="result-box"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="notes-title">
+        <p class="panel-label">App Review Notes</p>
+        <h2 id="notes-title">Review Safety Notes</h2>
+        <ul class="notes">
+          <li>This review demo uses server-side token storage.</li>
+          <li>No access token is exposed to the browser.</li>
+          <li>
+            Before advanced access approval, Threads keyword search may only return posts owned by
+            the authenticated tester account.
+          </li>
+          <li>After approval, public posts can be searched.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
