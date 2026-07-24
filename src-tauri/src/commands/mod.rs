@@ -1,3 +1,4 @@
+pub mod apify;
 pub mod candidates;
 pub mod config;
 pub mod costs;

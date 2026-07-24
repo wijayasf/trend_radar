@@ -43,8 +43,19 @@
 
   let databaseHealth = 'Checking local database...';
   let discoveryStatus = 'Idle';
+  let discoverySource = 'official_threads';
   let discoverySeedGroup = 'all';
   let discoveryMaxPerSeed = 10;
+  let apifySeedsText = [
+    'AI Agent',
+    'Agentic AI',
+    'Claude Code',
+    'Claude Code plugin',
+    'MCP server',
+    'Ponytail Claude Code',
+    'Cavemen Claude Code',
+    'Astryx AI',
+  ].join('\n');
   let discoverySeedsProcessed = 0;
   let discoveryFetchedTotal = 0;
   let discoveryDetailFetchedTotal = 0;
@@ -70,6 +81,15 @@
   let discoverySeedTestResult: DiscoverySeedTestResult | null = null;
   let isTestingDiscoverySeed = false;
   let isRunningDiscovery = false;
+  let apifyActorId = 'none';
+  let apifyActorRunId = 'none';
+  let apifyFilteredOutTotal = 0;
+  let apifyDetectedRelevanceCount = 0;
+  let apifyFilterEmptyText = 0;
+  let apifyFilterNoAiContext = 0;
+  let apifyFilterAmbiguousWithoutContext = 0;
+  let apifyFilterDuplicate = 0;
+  let apifySampleSavedPosts: ApifySamplePost[] = [];
   let keyword = 'AI Agent';
   let collectStatus = 'Idle';
   let fetchedCount = 0;
@@ -147,6 +167,8 @@
   let isLoadingCandidates = false;
   let activeCandidateAction = '';
   let activeCandidateActionType = '';
+  let resetStatus = 'Idle';
+  let isResettingLocalData = false;
 
   const candidateCategoryOptions = [
     'coding_agent',
@@ -229,6 +251,35 @@
     text_available_count: number;
     sample_text_snippet: string;
     error_summary: string;
+  };
+
+  type ApifyDiscoveryResult = {
+    mode: string;
+    actor_id: string;
+    actor_run_id: string;
+    fetched_total: number;
+    filtered_out_total: number;
+    saved_total: number;
+    duplicates_skipped: number;
+    detected_relevance_count: number;
+    included_by_context_count: number;
+    filtered_out_by_reason: ApifyFilterReasons;
+    sample_saved_posts: ApifySamplePost[];
+    safe_error_summary: string;
+  };
+
+  type ApifyFilterReasons = {
+    empty_text: number;
+    no_ai_context: number;
+    ambiguous_without_context: number;
+    duplicate: number;
+  };
+
+  type ApifySamplePost = {
+    post_id: string;
+    text_snippet: string;
+    source_seed_keyword: string;
+    permalink: string;
   };
 
   type AgentMentionPreview = {
@@ -566,6 +617,89 @@
     rawPostsCount = await invoke<number>('count_threads_raw_posts');
   }
 
+  async function resetLocalPipelineData() {
+    if (isResettingLocalData || isFullFlowRunning()) return;
+
+    isResettingLocalData = true;
+    resetStatus = 'Clearing local demo data...';
+
+    try {
+      const result = await invoke<string>('reset_local_pipeline_data');
+      resetStatus = result;
+      rawPostsCount = 0;
+      fetchedCount = 0;
+      savedCount = 0;
+      sampleLoadedCount = 0;
+      sampleSavedCount = 0;
+      analyzedPosts = 0;
+      mentionsFound = 0;
+      savedMentions = 0;
+      detectionPreview = [];
+      regionPostsAnalyzed = 0;
+      indonesiaCount = 0;
+      globalCount = 0;
+      unknownCount = 0;
+      regionUpdatedMentions = 0;
+      sentimentMentionsAnalyzed = 0;
+      positiveCount = 0;
+      neutralCount = 0;
+      negativeCount = 0;
+      mixedCount = 0;
+      sentimentUpdatedMentions = 0;
+      costMentionsAnalyzed = 0;
+      notMentionedCount = 0;
+      costPositiveCount = 0;
+      costNegativeBorosCount = 0;
+      costMixedCount = 0;
+      costUpdatedMentions = 0;
+      weeklyMetricsCount = 0;
+      weeklyIndonesiaCount = 0;
+      weeklyGlobalCount = 0;
+      weeklyUnknownCount = 0;
+      topIndonesia = [];
+      topGlobal = [];
+      topUnknown = [];
+      resetDiscoveryDiagnostics();
+      await loadCandidateEntities();
+    } catch (error) {
+      resetStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isResettingLocalData = false;
+    }
+  }
+
+  function resetDiscoveryDiagnostics() {
+    discoverySeedsProcessed = 0;
+    discoveryFetchedTotal = 0;
+    discoveryDetailFetchedTotal = 0;
+    discoveryDetailFailedTotal = 0;
+    discoveryIdOnlyResultsCount = 0;
+    discoveryTextMissingTotal = 0;
+    discoverySavedTotal = 0;
+    discoveryDuplicatesSkipped = 0;
+    discoveryFailedSeeds = 0;
+    discoveryZeroResultSeeds = 0;
+    discoveryPermissionLimitedHint = false;
+    discoveryLastSuccessfulSeed = 'none';
+    discoveryLastErrorSummary = 'none';
+    discoveryMode = 'none';
+    discoveryRunId = 'none';
+    discoveryStartedAt = 'none';
+    discoveryFinishedAt = 'none';
+    discoveryDurationMs = 0;
+    discoveryErrors = [];
+    discoverySeedResults = [];
+    apifyActorId = 'none';
+    apifyActorRunId = 'none';
+    apifyFilteredOutTotal = 0;
+    apifyDetectedRelevanceCount = 0;
+    apifyFilterEmptyText = 0;
+    apifyFilterNoAiContext = 0;
+    apifyFilterAmbiguousWithoutContext = 0;
+    apifyFilterDuplicate = 0;
+    apifySampleSavedPosts = [];
+  }
+
   async function loadCandidateEntities() {
     if (isLoadingCandidates) return;
 
@@ -668,29 +802,57 @@
     if (isRunningDiscovery) return;
 
     isRunningDiscovery = true;
-    discoveryStatus = 'Running AI Agent discovery crawl...';
-    discoverySeedsProcessed = 0;
-    discoveryFetchedTotal = 0;
-    discoveryDetailFetchedTotal = 0;
-    discoveryDetailFailedTotal = 0;
-    discoveryIdOnlyResultsCount = 0;
-    discoveryTextMissingTotal = 0;
-    discoverySavedTotal = 0;
-    discoveryDuplicatesSkipped = 0;
-    discoveryFailedSeeds = 0;
-    discoveryZeroResultSeeds = 0;
-    discoveryPermissionLimitedHint = false;
-    discoveryLastSuccessfulSeed = 'none';
-    discoveryLastErrorSummary = 'none';
-    discoveryMode = 'none';
-    discoveryRunId = 'none';
-    discoveryStartedAt = 'none';
-    discoveryFinishedAt = 'none';
-    discoveryDurationMs = 0;
-    discoveryErrors = [];
-    discoverySeedResults = [];
+    discoveryStatus =
+      discoverySource === 'apify_threads_scraper'
+        ? 'Running Apify fallback discovery crawl...'
+        : discoverySource === 'sample_mock'
+          ? 'Importing sample/mock discovery posts...'
+          : 'Running AI Agent discovery crawl...';
+    resetDiscoveryDiagnostics();
 
     try {
+      if (discoverySource === 'apify_threads_scraper') {
+        const seeds = apifySeedsText
+          .split('\n')
+          .map((seed) => seed.trim())
+          .filter(Boolean);
+        const result = await invoke<ApifyDiscoveryResult>('run_apify_discovery_crawl', {
+          seeds,
+          maxPerSeed: discoveryMaxPerSeed,
+        });
+        discoveryMode = result.mode;
+        discoveryFetchedTotal = result.fetched_total;
+        discoverySavedTotal = result.saved_total;
+        discoveryDuplicatesSkipped = result.duplicates_skipped;
+        discoverySeedsProcessed = seeds.length;
+        discoveryStatus = `Apify fallback saved ${result.saved_total} posts after filtering ${result.filtered_out_total} of ${result.fetched_total} fetched items.`;
+        discoveryLastErrorSummary = result.safe_error_summary || 'none';
+        apifyActorId = result.actor_id;
+        apifyActorRunId = result.actor_run_id;
+        apifyFilteredOutTotal = result.filtered_out_total;
+        apifyDetectedRelevanceCount = result.detected_relevance_count;
+        apifyFilterEmptyText = result.filtered_out_by_reason.empty_text;
+        apifyFilterNoAiContext = result.filtered_out_by_reason.no_ai_context;
+        apifyFilterAmbiguousWithoutContext =
+          result.filtered_out_by_reason.ambiguous_without_context;
+        apifyFilterDuplicate = result.filtered_out_by_reason.duplicate;
+        apifySampleSavedPosts = result.sample_saved_posts;
+        await refreshRawPostsCount();
+        return;
+      }
+
+      if (discoverySource === 'sample_mock') {
+        const result = await invoke<SampleThreadsImportResult>('import_sample_threads_posts');
+        sampleLoadedCount = result.loaded_count;
+        sampleSavedCount = result.saved_count;
+        discoveryMode = 'sample_mock';
+        discoveryFetchedTotal = result.loaded_count;
+        discoverySavedTotal = result.saved_count;
+        discoveryStatus = result.message;
+        await refreshRawPostsCount();
+        return;
+      }
+
       const result = await invoke<DiscoveryCrawlResult>('run_discovery_crawl', {
         regionSeedGroup: discoverySeedGroup,
         maxPerSeed: discoveryMaxPerSeed,
@@ -1043,6 +1205,28 @@
       {/if}
     </div>
 
+    <section class="reset-panel" aria-label="Local demo reset">
+      <div>
+        <strong>Clear Local Demo Data</strong>
+        <p>
+          Clears raw posts, mentions, and weekly metrics for local demo reset. Candidate decisions
+          are preserved.
+        </p>
+      </div>
+      <button
+        type="button"
+        on:click={resetLocalPipelineData}
+        disabled={isResettingLocalData || isFullFlowRunning()}
+      >
+        {#if isResettingLocalData}
+          {@render LoadingLabel('Clearing...')}
+        {:else}
+          Clear Local Demo Data
+        {/if}
+      </button>
+      <span>{resetStatus}</span>
+    </section>
+
     <div class="status-grid" aria-label="Workflow status">
       {#each flowSteps as step}
         <article class="status-card">
@@ -1093,12 +1277,25 @@
       </div>
 
       <form on:submit|preventDefault={runDiscoveryCrawl}>
+        <label for="discovery-source">Source</label>
+        <div class="collector-row discovery-row">
+          <select
+            id="discovery-source"
+            bind:value={discoverySource}
+            disabled={isRunningDiscovery || isFullFlowRunning()}
+          >
+            <option value="official_threads">Official Threads API</option>
+            <option value="apify_threads_scraper">Apify fallback</option>
+            <option value="sample_mock">Sample/mock</option>
+          </select>
+        </div>
+
         <label for="discovery-seed-group">Seed group</label>
         <div class="collector-row discovery-row">
           <select
             id="discovery-seed-group"
             bind:value={discoverySeedGroup}
-            disabled={isRunningDiscovery || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isFullFlowRunning() || discoverySource !== 'official_threads'}
           >
             <option value="all">All</option>
             <option value="indonesia">Indonesia</option>
@@ -1120,6 +1317,20 @@
             {/if}
           </button>
         </div>
+
+        {#if discoverySource === 'apify_threads_scraper'}
+          <p class="panel-note">
+            Apify fallback is experimental and should be reviewed for compliance before production
+            use.
+          </p>
+          <label for="apify-seeds">Apify seeds</label>
+          <textarea
+            id="apify-seeds"
+            bind:value={apifySeedsText}
+            rows="7"
+            disabled={isRunningDiscovery || isFullFlowRunning()}
+          ></textarea>
+        {/if}
       </form>
 
       <div class="collector-result" aria-live="polite">
@@ -1142,6 +1353,16 @@
         <span>Last successful seed: {discoveryLastSuccessfulSeed}</span>
         <span>Last error: {discoveryLastErrorSummary}</span>
         <span>Permission limited hint: {discoveryPermissionLimitedHint ? 'yes' : 'no'}</span>
+        {#if discoverySource === 'apify_threads_scraper' || discoveryMode === 'apify_threads_scraper'}
+          <span>Apify actor: {apifyActorId}</span>
+          <span>Apify actor run ID: {apifyActorRunId}</span>
+          <span>Apify relevant items: {apifyDetectedRelevanceCount}</span>
+          <span>Apify filtered out: {apifyFilteredOutTotal}</span>
+          <span>Filter empty text: {apifyFilterEmptyText}</span>
+          <span>Filter no AI context: {apifyFilterNoAiContext}</span>
+          <span>Filter ambiguous without context: {apifyFilterAmbiguousWithoutContext}</span>
+          <span>Filter duplicate: {apifyFilterDuplicate}</span>
+        {/if}
         {#if discoveryPermissionLimitedHint}
           <span>
             Crawler may be limited to authenticated user posts until threads_keyword_search is
@@ -1152,6 +1373,23 @@
           <span>Diagnostics: {discoveryErrors.join(' | ')}</span>
         {/if}
       </div>
+
+      {#if apifySampleSavedPosts.length > 0}
+        <div class="mention-preview" aria-label="Apify saved post preview">
+          {#each apifySampleSavedPosts as post}
+            <article class="mention-row">
+              <div>
+                <strong>{post.source_seed_keyword || 'Apify seed'}</strong>
+                <span>{post.post_id}</span>
+                {#if post.permalink}
+                  <span>{post.permalink}</span>
+                {/if}
+              </div>
+              <p>{post.text_snippet}</p>
+            </article>
+          {/each}
+        </div>
+      {/if}
 
       <form on:submit|preventDefault={testDiscoverySeed}>
         <label for="discovery-seed-test">Single seed test</label>

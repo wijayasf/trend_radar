@@ -20,10 +20,14 @@ CREATE TABLE IF NOT EXISTS threads_posts_raw (
     thread_id TEXT,
     author_id TEXT,
     author_username TEXT,
+    author_display_name TEXT,
     text TEXT NOT NULL,
     text_missing BOOLEAN DEFAULT FALSE,
     permalink TEXT,
     media_type TEXT,
+    source_type TEXT,
+    source_seed_keyword TEXT,
+    keyword_match TEXT,
     language TEXT,
     region_hint TEXT,
     region_confidence DOUBLE DEFAULT 0.0,
@@ -32,13 +36,27 @@ CREATE TABLE IF NOT EXISTS threads_posts_raw (
     reply_count BIGINT DEFAULT 0,
     repost_count BIGINT DEFAULT 0,
     quote_count BIGINT DEFAULT 0,
+    share_count BIGINT DEFAULT 0,
+    view_count BIGINT DEFAULT 0,
     posted_at TIMESTAMP,
     collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     raw_json TEXT
 );
 
 ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS author_display_name TEXT;
+
+ALTER TABLE threads_posts_raw
     ADD COLUMN IF NOT EXISTS media_type TEXT;
+
+ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS source_type TEXT;
+
+ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS source_seed_keyword TEXT;
+
+ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS keyword_match TEXT;
 
 ALTER TABLE threads_posts_raw
     ADD COLUMN IF NOT EXISTS text_missing BOOLEAN DEFAULT FALSE;
@@ -48,6 +66,12 @@ ALTER TABLE threads_posts_raw
 
 ALTER TABLE threads_posts_raw
     ADD COLUMN IF NOT EXISTS region_reason TEXT;
+
+ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS share_count BIGINT DEFAULT 0;
+
+ALTER TABLE threads_posts_raw
+    ADD COLUMN IF NOT EXISTS view_count BIGINT DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS crawl_runs (
     id TEXT PRIMARY KEY,
@@ -294,16 +318,22 @@ INSERT OR REPLACE INTO threads_posts_raw (
     thread_id,
     author_id,
     author_username,
+    author_display_name,
     text,
     text_missing,
     permalink,
     media_type,
+    source_type,
+    source_seed_keyword,
+    keyword_match,
     language,
     region_hint,
     like_count,
     reply_count,
     repost_count,
     quote_count,
+    share_count,
+    view_count,
     posted_at,
     raw_json
 ) VALUES (
@@ -315,14 +345,20 @@ INSERT OR REPLACE INTO threads_posts_raw (
     ?5,
     ?6,
     ?7,
+    ?8,
+    ?9,
+    ?10,
+    ?11,
     NULL,
     NULL,
-    0,
-    0,
-    0,
-    0,
-    TRY_CAST(?8 AS TIMESTAMP),
-    ?9
+    ?12,
+    ?13,
+    ?14,
+    ?15,
+    ?16,
+    ?17,
+    TRY_CAST(?18 AS TIMESTAMP),
+    ?19
 );
 "#;
 
@@ -518,7 +554,8 @@ WITH base AS (
             - CAST(((EXTRACT(dow FROM CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)) + 6) % 7) AS INTEGER)
             AS week_start,
         COALESCE(m.region, 'unknown') AS region,
-        m.agent_name,
+        lower(trim(m.agent_name)) AS canonical_entity_key,
+        trim(m.agent_name) AS agent_name,
         COALESCE(m.category, 'unknown') AS category,
         COALESCE(m.sentiment, 'unknown') AS sentiment,
         COALESCE(m.cost_signal, 'not_mentioned') AS cost_signal
@@ -539,7 +576,7 @@ grouped AS (
         week_start,
         CAST(week_start + INTERVAL 6 DAY AS DATE) AS week_end,
         region,
-        agent_name,
+        MIN(agent_name) AS agent_name,
         category,
         COUNT(*) AS mentions,
         SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive_count,
@@ -551,7 +588,7 @@ grouped AS (
         SUM(CASE WHEN cost_signal = 'cost_negative_boros' THEN 1 ELSE 0 END) AS cost_negative_boros_count,
         SUM(CASE WHEN cost_signal = 'cost_mixed' THEN 1 ELSE 0 END) AS cost_mixed_count
     FROM base
-    GROUP BY week_start, week_end, region, agent_name, category
+    GROUP BY week_start, week_end, region, canonical_entity_key, category
 )
 SELECT
     week_start,
@@ -635,10 +672,20 @@ pub fn save_threads_raw_posts(posts: &[ThreadPostRaw]) -> Result<usize, String> 
                     &post.post_id,
                     &post.author_id,
                     &post.author_username,
+                    &post.author_display_name,
                     &post.text,
                     post.text_missing,
                     &post.permalink,
                     &post.media_type,
+                    &post.source_type,
+                    &post.source_seed_keyword,
+                    &post.keyword_match,
+                    post.like_count,
+                    post.reply_count,
+                    post.repost_count,
+                    post.quote_count,
+                    post.share_count,
+                    post.view_count,
                     &post.posted_at,
                     &post.raw_json
                 ])
@@ -664,6 +711,43 @@ pub fn count_threads_raw_posts() -> Result<usize, String> {
         .map_err(|error| format!("DuckDB raw post count query failed: {error}"))?;
 
     usize::try_from(count).map_err(|error| format!("DuckDB raw post count is invalid: {error}"))
+}
+
+pub fn reset_local_pipeline_data() -> Result<String, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+
+    connection
+        .execute("DELETE FROM agent_mentions", [])
+        .map_err(|error| format!("DuckDB agent mention reset failed: {error}"))?;
+    connection
+        .execute("DELETE FROM weekly_agent_metrics", [])
+        .map_err(|error| format!("DuckDB weekly metrics reset failed: {error}"))?;
+    connection
+        .execute("DELETE FROM crawl_runs", [])
+        .map_err(|error| format!("DuckDB crawl run reset failed: {error}"))?;
+    if table_exists(&connection, "crawl_seed_results")? {
+        connection
+            .execute("DELETE FROM crawl_seed_results", [])
+            .map_err(|error| format!("DuckDB crawl seed result reset failed: {error}"))?;
+    }
+    connection
+        .execute("DELETE FROM threads_posts_raw", [])
+        .map_err(|error| format!("DuckDB raw post reset failed: {error}"))?;
+
+    Ok("Cleared local demo data: raw posts, mentions, crawl runs, and weekly metrics. Candidate decisions were preserved.".to_string())
+}
+
+fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?1",
+            params![table_name],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("DuckDB table existence check failed: {error}"))?;
+
+    Ok(count > 0)
 }
 
 pub fn save_crawl_run(result: &DiscoveryCrawlResult) -> Result<usize, String> {

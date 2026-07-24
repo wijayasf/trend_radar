@@ -62,6 +62,8 @@ fn classify_text(text: &str) -> CostClassification {
 
     let positive_matches = matched_signals(&normalized_text, COST_POSITIVE_INDICATORS);
     let negative_matches = matched_signals(&normalized_text, COST_NEGATIVE_INDICATORS);
+    let neutral_matches = matched_signals(&normalized_text, COST_NEUTRAL_MENTION_INDICATORS);
+    let has_money_per_month = has_money_per_month_signal(text);
 
     match (positive_matches.is_empty(), negative_matches.is_empty()) {
         (false, false) => classification(
@@ -89,6 +91,20 @@ fn classify_text(text: &str) -> CostClassification {
                 negative_matches.join(", ")
             ),
         ),
+        (true, true) if !neutral_matches.is_empty() || has_money_per_month => {
+            let mut matches = neutral_matches;
+            if has_money_per_month {
+                matches.push("money per month");
+            }
+            classification(
+                "cost_mixed",
+                0.66,
+                &format!(
+                    "matched neutral cost mention signals: {}",
+                    matches.join(", ")
+                ),
+            )
+        }
         (true, true) => classification("not_mentioned", 0.62, "no clear cost/token/quota signal"),
     }
 }
@@ -97,7 +113,7 @@ fn matched_signals(normalized_text: &str, signals: &[&'static str]) -> Vec<&'sta
     signals
         .iter()
         .copied()
-        .filter(|signal| contains_phrase(normalized_text, signal))
+        .filter(|signal| contains_phrase(normalized_text, &normalize_text(signal)))
         .collect()
 }
 
@@ -135,24 +151,36 @@ fn normalize_text(text: &str) -> String {
     normalized.trim().to_string()
 }
 
+fn has_money_per_month_signal(text: &str) -> bool {
+    let lowercase = text.to_lowercase();
+    lowercase.contains('$') && (lowercase.contains("/mo") || lowercase.contains("per month"))
+}
+
 const COST_NEGATIVE_INDICATORS: &[&str] = &[
     "boros",
+    "boros token",
     "mahal",
     "mahal banget",
     "token habis",
     "token cepat habis",
     "quota habis",
     "kuota habis",
+    "kuota",
+    "quota",
     "limit",
     "rate limit",
     "expensive",
     "pricey",
+    "too expensive",
     "costly",
     "burns token",
+    "burns tokens",
+    "token burn",
     "burn tokens",
     "token hungry",
     "usage limit",
-    "too expensive",
+    "subscription is too much",
+    "cepat habis",
 ];
 
 const COST_POSITIVE_INDICATORS: &[&str] = &[
@@ -160,10 +188,26 @@ const COST_POSITIVE_INDICATORS: &[&str] = &[
     "hemat",
     "worth it",
     "cost effective",
+    "cost-effective",
     "cheap",
     "affordable",
     "good value",
     "worth the price",
+    "sepadan",
+    "worth the money",
+];
+
+const COST_NEUTRAL_MENTION_INDICATORS: &[&str] = &[
+    "subscription",
+    "100 mo",
+    "per month",
+    "monthly",
+    "pricing",
+    "price",
+    "plan",
+    "paid",
+    "pro plan",
+    "max plan",
 ];
 
 const COST_MIXED_INDICATORS: &[&str] = &[
@@ -206,5 +250,27 @@ mod tests {
         let result = classify_text("Cline is useful for approval workflow.");
 
         assert_eq!(result.cost_signal, "not_mentioned");
+    }
+
+    #[test]
+    fn classifies_money_per_month_as_cost_mentioned() {
+        let result = classify_text("Claude Code subscription — $100/mo.");
+
+        assert_ne!(result.cost_signal, "not_mentioned");
+        assert_eq!(result.cost_signal, "cost_mixed");
+    }
+
+    #[test]
+    fn classifies_subscription_as_cost_mentioned() {
+        let result = classify_text("Claude Code subscription is available.");
+
+        assert_ne!(result.cost_signal, "not_mentioned");
+    }
+
+    #[test]
+    fn classifies_boros_token_as_negative_boros() {
+        let result = classify_text("Claude Code boros token.");
+
+        assert_eq!(result.cost_signal, "cost_negative_boros");
     }
 }

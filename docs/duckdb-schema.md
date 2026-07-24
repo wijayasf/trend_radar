@@ -22,15 +22,19 @@ Raw local archive of Threads posts collected for trend analysis.
 - `thread_id`: Optional parent/thread identifier.
 - `author_id`: Threads author identifier from API data.
 - `author_username`: Display username if available.
+- `author_display_name`: Optional display name from fallback sources when available.
 - `text`: Post text.
 - `text_missing`: `true` when keyword/detail response did not provide text or caption.
 - `permalink`: Optional post URL.
 - `media_type`: Optional Threads media type from the API response.
+- `source_type`: Source connector label, such as `apify_threads_scraper` for the experimental fallback.
+- `source_seed_keyword`: Seed/search keyword that produced the raw post when available.
+- `keyword_match`: Source-provided keyword match diagnostic when available.
 - `language`: Optional detected or API-provided language.
 - `region_hint`: Optional region hint such as `indonesia`, `global`, or `unknown`.
 - `region_confidence`: Rule-based classifier confidence for the post region.
 - `region_reason`: Short explainable reason for the post region label.
-- Engagement fields: like, reply, repost, and quote counts.
+- Engagement fields: like, reply, repost, quote, share, and view counts.
 - `posted_at`: Post timestamp from Threads.
 - `collected_at`: Local collection timestamp.
 - `raw_json`: Optional raw API payload as text for replay/debugging.
@@ -127,6 +131,8 @@ Aggregated weekly reporting table.
 
 Weekly aggregation includes known aliases and approved candidates. Pending `unknown_candidate` rows and ignored candidates are excluded from Top Indonesia/Global/Unknown metrics so unreviewed discoveries do not pollute rankings.
 
+Rows are grouped by `week_start`, `region`, canonical entity key, and `category`. The canonical key is based on `lower(trim(agent_name))`, so casing or source-record variants such as `Claude Code` and `claude code` collapse into one row per region/week/category.
+
 MVP trend score formula:
 
 ```text
@@ -145,3 +151,5 @@ The score formula should move to `config/scoring.yml` when the ranking design st
 - Schema initialization uses `CREATE TABLE IF NOT EXISTS` for MVP.
 - Schema initialization uses additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migrations; there is no `agent_mentions_compatible` table or view.
 - A fuller migration system should be introduced only when schema changes become frequent or data migration becomes risky.
+- The Apify connector is an experimental fallback. Its extra source metadata is additive and should be reviewed for compliance before production use.
+- Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.

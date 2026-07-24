@@ -8,9 +8,19 @@ pub struct ThreadPostRaw {
     pub text_missing: bool,
     pub author_id: Option<String>,
     pub author_username: Option<String>,
+    pub author_display_name: Option<String>,
     pub media_type: Option<String>,
     pub permalink: Option<String>,
     pub posted_at: Option<String>,
+    pub source_type: Option<String>,
+    pub source_seed_keyword: Option<String>,
+    pub keyword_match: Option<String>,
+    pub like_count: i64,
+    pub reply_count: i64,
+    pub repost_count: i64,
+    pub quote_count: i64,
+    pub share_count: i64,
+    pub view_count: i64,
     pub raw_json: String,
 }
 
@@ -106,6 +116,38 @@ pub struct ThreadsSearchResult {
     pub pages_fetched: usize,
     pub pagination_stopped_reason: String,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApifyDiscoveryResult {
+    pub mode: String,
+    pub actor_id: String,
+    pub actor_run_id: String,
+    pub fetched_total: usize,
+    pub filtered_out_total: usize,
+    pub saved_total: usize,
+    pub duplicates_skipped: usize,
+    pub detected_relevance_count: usize,
+    pub included_by_context_count: usize,
+    pub filtered_out_by_reason: ApifyFilterReasons,
+    pub sample_saved_posts: Vec<ApifySamplePost>,
+    pub safe_error_summary: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ApifyFilterReasons {
+    pub empty_text: usize,
+    pub no_ai_context: usize,
+    pub ambiguous_without_context: usize,
+    pub duplicate: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApifySamplePost {
+    pub post_id: String,
+    pub text_snippet: String,
+    pub source_seed_keyword: String,
+    pub permalink: String,
 }
 
 impl DiscoveryKeywordGroups {
@@ -213,9 +255,19 @@ impl ThreadsApiPost {
             text,
             author_id,
             author_username,
+            author_display_name: None,
             media_type: self.media_type,
             permalink: self.permalink,
             posted_at: self.timestamp,
+            source_type: None,
+            source_seed_keyword: None,
+            keyword_match: None,
+            like_count: 0,
+            reply_count: 0,
+            repost_count: 0,
+            quote_count: 0,
+            share_count: 0,
+            view_count: 0,
             raw_json,
         }
     }
@@ -239,9 +291,19 @@ impl SampleThreadsPost {
             text_missing: false,
             author_id: None,
             author_username: None,
+            author_display_name: None,
             media_type: self.media_type,
             permalink: self.permalink,
             posted_at: self.posted_at,
+            source_type: Some("sample_threads_posts".to_string()),
+            source_seed_keyword: None,
+            keyword_match: None,
+            like_count: 0,
+            reply_count: 0,
+            repost_count: 0,
+            quote_count: 0,
+            share_count: 0,
+            view_count: 0,
             raw_json,
         }
     }

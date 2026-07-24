@@ -24,12 +24,14 @@ The application is designed as a local-first desktop app, using DuckDB for local
 - DuckDB
 - Svelte / TypeScript
 - Threads API
+- Experimental Apify fallback connector
 
 ## Main Capabilities
 
 - Local DuckDB storage.
 - Threads API integration.
 - AI Agent discovery crawler using broad seed keywords from `config/discovery_keywords.yml`.
+- Experimental Apify Threads scraper fallback with AI Agent relevance filtering.
 - Crawl diagnostics with run summary, seed-level status, bounded pagination, and single-seed testing.
 - Safe environment-based configuration.
 - Sample data import for local testing.
@@ -80,12 +82,9 @@ Examples of supported entities include:
 
 Create a local `.env` file based on `.env.example`.
 
-```env
-THREADS_ACCESS_TOKEN=
-THREADS_USER_ID=
-APP_ENV=local
-DATABASE_PATH=./data/app.duckdb
-```
+Required variable names are `THREADS_ACCESS_TOKEN`, `THREADS_USER_ID`, `APP_ENV`, and `DATABASE_PATH`.
+
+Optional Apify fallback variables are documented in `.env.example`.
 
 Do not commit `.env`.
 
@@ -150,6 +149,16 @@ The desktop UI includes guided demo controls:
 
 Candidate review remains manual so new or unknown entities are not approved automatically.
 Long-running actions show disabled buttons, loading labels, and a compact spinner so demo state is visible while the local pipeline runs.
+
+Use `Clear Local Demo Data` to reset raw posts, mentions, crawl runs, and weekly metrics during demos. Durable candidate review decisions are preserved so approved/ignored candidate choices continue to apply.
+
+## Apify Fallback Connector
+
+The official Threads API remains the preferred connector. An experimental fallback connector is available for Apify actor `futurizerush/meta-threads-scraper` when review/demo work needs an alternate source.
+
+The fallback stores the Apify token in backend environment variables only, labels raw rows with `source_type = apify_threads_scraper`, and applies a relevance filter before saving posts. Ambiguous keywords such as `Ponytail`, `Caveman`, and `Cavemen` require AI Agent or developer context such as Claude Code, MCP, coding workflow, LLM, plugin, SDK, CLI, server, framework, model, or tool terms before they enter the local pipeline.
+
+Do not use the Apify fallback in production without legal and compliance review.
 
 ## Review Web Demo
 

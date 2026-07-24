@@ -1,86 +1,66 @@
 # Latest Handoff
 
-Date: 2026-07-15
-Session: 033-review-web-demo
+Date: 2026-07-24
+Session: 035-apify-data-quality
 Agent: Codex
 
 ## Current State
 
-A standalone Review Web Demo has been added under `apps/review-web/` for Threads/Meta App Review. The main Tauri desktop app was not intentionally changed.
+Apify fallback connector and data-quality hardening have been implemented locally. Official Threads API connector remains in place and is still the default source.
 
-## Review Web Demo
+## Key Changes
 
-Location:
-
-```text
-apps/review-web/
-```
-
-Endpoints:
-
-- `GET /health`
-- `GET /api/test-seed?q=AI%20Agent`
-- `POST /api/discovery-crawl`
-
-The server stores the Threads access token in environment variables only and does not expose it to browser JavaScript.
-
-## Local Run
-
-```bash
-cd apps/review-web
-npm install
-cp .env.example .env
-npm start
-```
-
-Open:
-
-- `http://localhost:3000/health`
-- `http://localhost:3000/`
-
-## Render Deployment
-
-- Root Directory: `apps/review-web`
-- Build command: `npm install`
-- Start command: `npm start`
-- Environment variables:
-  - `THREADS_ACCESS_TOKEN`
-  - `THREADS_USER_ID`
-  - `APP_ENV=review`
+- Apify fallback source:
+  - command: `run_apify_discovery_crawl(seeds?, max_per_seed?)`
+  - actor: `futurizerush/meta-threads-scraper`
+  - source label: `apify_threads_scraper`
+- Apify relevance filter:
+  - excludes empty text
+  - excludes no AI/developer context
+  - excludes Ponytail/Caveman/Cavemen without strong AI/developer context
+  - dedupes by `post_code`, fallback `post_url`
+  - returns `included_by_context_count` plus filter reason counts
+- Candidate extraction:
+  - common capitalized words are hard-blocked
+  - unknown candidates require tool-ish tokens, product/tool-like phrase shape, or nearby tool/developer context
+  - known aliases still work before candidate extraction
+- Weekly metrics:
+  - groups by lower-trimmed canonical entity key plus week/category/region
+- Cost classifier:
+  - recognizes more negative/boros, positive, and neutral cost mention patterns
+  - `$100/mo` and `subscription` no longer classify as `not_mentioned`
+- Local demo reset:
+  - command: `reset_local_pipeline_data()`
+  - UI button: `Clear Local Demo Data`
+  - clears raw posts, mentions, crawl runs, and weekly metrics
+  - preserves `entity_review_decisions`
 
 ## Validation
 
-- `cd apps/review-web && npm install`: passed.
-  - 0 vulnerabilities.
-- `npm start`: passed with sandbox escalation for local port binding.
-- `GET /health`: passed.
-  - `tokenConfigured: false` and `userIdConfigured: false` because no local review-web `.env` was created.
-- `GET /`: passed with HTTP 200.
-- `GET /api/test-seed?q=AI%20Agent`: passed friendly missing-token response.
-- `POST /api/discovery-crawl`: passed friendly missing-token seed diagnostics response.
-- Root `npm run build`: passed.
+- `npm run build`: passed.
 - `cargo fmt --check`: passed.
 - `cargo check`: passed.
-  - Existing Rust placeholder/dead-code warnings remain.
 - `cargo test validates_sample_full_mvp_flow -- --test-threads=1`: passed.
+- `cargo test validates_raw_post_insert_after_schema_init -- --test-threads=1`: passed.
+- `cargo test filters_apify_threads_results_for_ai_agent_relevance -- --test-threads=1`: passed.
+- `cargo test excludes_common_capitalized_words_from_unknown_candidates -- --test-threads=1`: passed.
+- `cargo test keeps_known_aliases_while_tightening_candidates -- --test-threads=1`: passed.
+- `cargo test services::cost_classifier::tests -- --test-threads=1`: passed.
+- `cargo test validates_weekly_metrics_group_canonical_entities -- --test-threads=1`: passed.
+- `cargo test validates_reset_local_pipeline_data_preserves_candidate_decisions -- --test-threads=1`: passed.
 - `git diff --check`: passed.
-- Security grep checks: passed.
-  - No Threads token prefix matches.
-  - No app secret key matches.
-  - Token env assignment matches are README placeholders only.
+- Security grep for `APIFY_TOKEN=`, `THAAP`, `app_secret`, and `THREADS_ACCESS_TOKEN=`: passed.
 
 ## Pending
 
-- Commit if clean:
-  - `feat: add Threads app review web demo`
+- Commit locally with `fix: improve Apify discovery data quality`.
 - Do not push unless explicitly requested.
 
 ## Risk Note
 
-- This web demo is for App Review demonstration, not production analytics.
-- No database is used; discovery results are in-memory per request.
-- Before app approval, keyword search may only return authenticated tester account posts.
-- Token and `.env` contents were not read or printed.
+- Candidate extraction is intentionally conservative; add explicit aliases for niche tools that are wrongly excluded.
+- Cost neutral mentions map to `cost_mixed` because the current MVP schema has no `cost_mentioned_neutral` label.
+- Apify fallback remains experimental and requires compliance review before production use.
 
 ## Token Usage
 

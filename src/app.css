@@ -99,6 +99,47 @@ h1 {
   font-weight: 800;
 }
 
+.reset-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 18px;
+  border: 1px solid rgba(139, 74, 47, 0.22);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: rgba(255, 246, 232, 0.78);
+}
+
+.reset-panel strong,
+.reset-panel span {
+  color: #182024;
+}
+
+.reset-panel p {
+  margin: 6px 0 0;
+  color: #687478;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.reset-panel button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 16px;
+  background: #8b4a2f;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reset-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .button-loading {
   display: inline-flex;
   gap: 8px;
@@ -317,12 +358,22 @@ h1 {
 }
 
 .collector-row input,
-.collector-row select {
+.collector-row select,
+.collector-panel textarea {
   width: 100%;
   border: 1px solid rgba(24, 32, 36, 0.18);
   padding: 0 12px;
   background: #ffffff;
   color: #182024;
+}
+
+.collector-panel textarea {
+  min-height: 132px;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .discovery-row {
@@ -361,6 +412,7 @@ h1 {
 .collector-row button:disabled,
 .collector-row input:disabled,
 .collector-row select:disabled,
+.collector-panel textarea:disabled,
 .detector-header button:disabled,
 .export-actions button:disabled {
   cursor: not-allowed;
@@ -518,7 +570,8 @@ h1 {
   .collector-row,
   .discovery-row,
   .detector-header,
-  .mention-row {
+  .mention-row,
+  .reset-panel {
     grid-template-columns: 1fr;
   }
 

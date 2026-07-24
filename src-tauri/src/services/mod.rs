@@ -1,3 +1,4 @@
+pub mod apify_connector;
 pub mod candidate_review;
 pub mod cost_classifier;
 pub mod discovery_crawler;

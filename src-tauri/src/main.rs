@@ -12,6 +12,8 @@ fn main() {
             commands::config::env_config_status,
             commands::database::check_database_health,
             commands::database::count_threads_raw_posts,
+            commands::database::reset_local_pipeline_data,
+            commands::apify::run_apify_discovery_crawl,
             commands::candidates::approve_candidate_entity,
             commands::candidates::ignore_candidate_entity,
             commands::candidates::list_candidate_entities,
@@ -41,6 +43,7 @@ mod tests {
     use duckdb::Connection;
     use serde_json::Value;
 
+    use crate::models::entities::DetectedAgentMention;
     use crate::models::threads::ThreadPostRaw;
     use crate::services::{
         candidate_review, cost_classifier, discovery_crawler, duckdb_service, entity_detector,
@@ -61,9 +64,19 @@ mod tests {
             text_missing: false,
             author_id: None,
             author_username: Some("schema_tester".to_string()),
+            author_display_name: None,
             media_type: Some("TEXT".to_string()),
             permalink: Some("mock://threads/schema-regression-raw-001".to_string()),
             posted_at: Some("2026-07-06T09:00:00Z".to_string()),
+            source_type: Some("schema_regression_test".to_string()),
+            source_seed_keyword: None,
+            keyword_match: None,
+            like_count: 0,
+            reply_count: 0,
+            repost_count: 0,
+            quote_count: 0,
+            share_count: 0,
+            view_count: 0,
             raw_json: "{}".to_string(),
         }])
         .expect("raw post insert should not depend on mention compatibility migration");
@@ -80,6 +93,112 @@ mod tests {
             .preview
             .iter()
             .any(|mention| mention.agent_name == "NovaForge"));
+
+        cleanup_database_files(&database_path);
+    }
+
+    #[test]
+    fn validates_weekly_metrics_group_canonical_entities() {
+        let database_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-weekly-canonical-test.duckdb");
+        cleanup_database_files(&database_path);
+        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+
+        duckdb_service::initialize_database().expect("schema initialization should succeed");
+        duckdb_service::save_threads_raw_posts(&[
+            test_raw_post(
+                "weekly-canonical-1",
+                "Claude Code and MCP server are useful.",
+                "2026-07-06T09:00:00Z",
+            ),
+            test_raw_post(
+                "weekly-canonical-2",
+                "claude code and mcp server again.",
+                "2026-07-06T10:00:00Z",
+            ),
+        ])
+        .expect("raw posts should save");
+
+        duckdb_service::save_agent_mentions(&[
+            test_mention("weekly-canonical-1", "Claude Code", "coding_agent"),
+            test_mention("weekly-canonical-2", "claude code", "coding_agent"),
+            test_mention("weekly-canonical-1", "MCP", "mcp_or_connector"),
+            test_mention("weekly-canonical-2", "mcp", "mcp_or_connector"),
+        ])
+        .expect("mentions should save");
+
+        let weekly_result = weekly_aggregator::aggregate_weekly_metrics()
+            .expect("weekly aggregation should group canonical entities");
+        let global_metrics = weekly_result.top_global;
+        let claude_rows = global_metrics
+            .iter()
+            .filter(|metric| metric.agent_name.eq_ignore_ascii_case("Claude Code"))
+            .collect::<Vec<_>>();
+        let mcp_rows = global_metrics
+            .iter()
+            .filter(|metric| metric.agent_name.eq_ignore_ascii_case("MCP"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(claude_rows.len(), 1);
+        assert_eq!(claude_rows[0].mentions, 2);
+        assert_eq!(mcp_rows.len(), 1);
+        assert_eq!(mcp_rows[0].mentions, 2);
+
+        cleanup_database_files(&database_path);
+    }
+
+    #[test]
+    fn validates_reset_local_pipeline_data_preserves_candidate_decisions() {
+        let database_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-reset-demo-data-test.duckdb");
+        cleanup_database_files(&database_path);
+        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+
+        duckdb_service::initialize_database().expect("schema initialization should succeed");
+        duckdb_service::save_threads_raw_posts(&[test_raw_post(
+            "reset-demo-1",
+            "ResetDemoAI appears in agent workflow notes.",
+            "2026-07-06T09:00:00Z",
+        )])
+        .expect("raw post should save");
+        duckdb_service::save_agent_mentions(&[test_mention(
+            "reset-demo-1",
+            "ResetDemoAI",
+            "unknown_candidate",
+        )])
+        .expect("mention should save");
+        candidate_review::approve_candidate_entity(
+            "ResetDemoAI".to_string(),
+            "ResetDemoAI".to_string(),
+            "coding_agent".to_string(),
+            Some("preserve decision during demo reset".to_string()),
+        )
+        .expect("candidate decision should save");
+        let _ = weekly_aggregator::aggregate_weekly_metrics()
+            .expect("weekly metrics should build before reset");
+
+        let reset_message =
+            duckdb_service::reset_local_pipeline_data().expect("demo data reset should succeed");
+        assert!(reset_message.contains("Candidate decisions were preserved"));
+        assert_eq!(
+            duckdb_service::count_threads_raw_posts().expect("raw post count should be readable"),
+            0
+        );
+        assert!(duckdb_service::load_raw_posts_for_detection()
+            .expect("raw posts should be queryable")
+            .is_empty());
+        assert!(
+            duckdb_service::load_weekly_agent_metrics_by_region("global", 20)
+                .expect("weekly metrics should be queryable")
+                .is_empty()
+        );
+        let decisions = candidate_review::list_entity_review_decisions()
+            .expect("candidate decisions should remain after reset");
+        assert!(decisions
+            .decisions
+            .iter()
+            .any(|decision| decision.candidate_name == "ResetDemoAI"
+                && decision.status == "approved"));
 
         cleanup_database_files(&database_path);
     }
@@ -221,9 +340,19 @@ mod tests {
                 text_missing: false,
                 author_id: None,
                 author_username: Some("mock_candidate_reviewer".to_string()),
+                author_display_name: None,
                 media_type: Some("TEXT".to_string()),
                 permalink: Some("mock://threads/mock-detail-novaforge-followup".to_string()),
                 posted_at: Some("2026-07-05T12:00:00Z".to_string()),
+                source_type: Some("candidate_registry_test".to_string()),
+                source_seed_keyword: None,
+                keyword_match: None,
+                like_count: 0,
+                reply_count: 0,
+                repost_count: 0,
+                quote_count: 0,
+                share_count: 0,
+                view_count: 0,
                 raw_json: "{}".to_string(),
             },
             ThreadPostRaw {
@@ -232,9 +361,19 @@ mod tests {
                 text_missing: false,
                 author_id: None,
                 author_username: Some("mock_candidate_reviewer".to_string()),
+                author_display_name: None,
                 media_type: Some("TEXT".to_string()),
                 permalink: Some("mock://threads/mock-detail-flowpilot-followup".to_string()),
                 posted_at: Some("2026-07-05T13:00:00Z".to_string()),
+                source_type: Some("candidate_registry_test".to_string()),
+                source_seed_keyword: None,
+                keyword_match: None,
+                like_count: 0,
+                reply_count: 0,
+                repost_count: 0,
+                quote_count: 0,
+                share_count: 0,
+                view_count: 0,
                 raw_json: "{}".to_string(),
             },
         ])
@@ -413,6 +552,60 @@ mod tests {
 
     fn temp_database_path() -> PathBuf {
         std::env::temp_dir().join("ai-agent-trend-radar-full-flow-test.duckdb")
+    }
+
+    fn test_raw_post(post_id: &str, text: &str, posted_at: &str) -> ThreadPostRaw {
+        ThreadPostRaw {
+            post_id: post_id.to_string(),
+            text: text.to_string(),
+            text_missing: text.trim().is_empty(),
+            author_id: None,
+            author_username: Some("test_author".to_string()),
+            author_display_name: None,
+            media_type: Some("TEXT".to_string()),
+            permalink: Some(format!("mock://threads/{post_id}")),
+            posted_at: Some(posted_at.to_string()),
+            source_type: Some("test".to_string()),
+            source_seed_keyword: None,
+            keyword_match: None,
+            like_count: 0,
+            reply_count: 0,
+            repost_count: 0,
+            quote_count: 0,
+            share_count: 0,
+            view_count: 0,
+            raw_json: "{}".to_string(),
+        }
+    }
+
+    fn test_mention(post_id: &str, agent_name: &str, category: &str) -> DetectedAgentMention {
+        DetectedAgentMention {
+            mention_id: format!("{post_id}::{}", agent_name.to_lowercase().replace(' ', "_")),
+            post_id: post_id.to_string(),
+            agent_name: agent_name.to_string(),
+            agent_alias: agent_name.to_string(),
+            category: category.to_string(),
+            detection_source: if category == "unknown_candidate" {
+                "candidate_pattern".to_string()
+            } else {
+                "known_alias".to_string()
+            },
+            needs_review: category == "unknown_candidate",
+            review_status: if category == "unknown_candidate" {
+                "pending".to_string()
+            } else {
+                "approved".to_string()
+            },
+            reviewed_as: None,
+            reviewed_category: None,
+            region: "global".to_string(),
+            confidence: 0.9,
+            match_confidence: 0.9,
+            relevance_score: 0.9,
+            sentiment: "positive".to_string(),
+            cost_signal: "not_mentioned".to_string(),
+            source_snippet: format!("{agent_name} appears in AI agent workflow notes."),
+        }
     }
 
     fn cleanup_database_files(database_path: &PathBuf) {

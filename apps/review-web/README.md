@@ -20,12 +20,7 @@ Open:
 
 ## Environment Variables
 
-```env
-THREADS_ACCESS_TOKEN=
-THREADS_USER_ID=
-APP_ENV=review
-PORT=3000
-```
+Required variable names are `THREADS_ACCESS_TOKEN`, `THREADS_USER_ID`, `APP_ENV`, and `PORT`.
 
 Do not commit `.env`.
 

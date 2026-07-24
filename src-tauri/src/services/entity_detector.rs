@@ -247,6 +247,7 @@ fn detect_candidate_mentions(
         let normalized_candidate = normalize_text(&candidate);
         if normalized_candidate.is_empty()
             || is_candidate_stop_phrase(&normalized_candidate)
+            || !is_meaningful_unknown_candidate(&candidate, &normalized_candidate, normalized_text)
             || known_aliases.contains(&normalized_candidate)
             || seen_agents.iter().any(|agent| {
                 let normalized_agent = normalize_text(agent);
@@ -416,7 +417,7 @@ fn extract_candidate_names(text: &str) -> Vec<String> {
         let mut phrase = vec![token.to_string()];
         let mut next = index + 1;
         while next < tokens.len()
-            && phrase.len() < 3
+            && phrase.len() < 4
             && is_capitalized_candidate_token(tokens[next])
         {
             phrase.push(tokens[next].to_string());
@@ -455,6 +456,17 @@ fn is_capitalized_candidate_token(token: &str) -> bool {
 }
 
 fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
+    if candidate_stopwords().contains(&normalized_candidate) {
+        return true;
+    }
+
+    if normalized_candidate
+        .split_whitespace()
+        .all(|token| candidate_stopwords().contains(&token))
+    {
+        return true;
+    }
+
     let stop_phrases = [
         "ada",
         "agent",
@@ -474,6 +486,135 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
     ];
 
     stop_phrases.contains(&normalized_candidate)
+}
+
+fn is_meaningful_unknown_candidate(
+    candidate: &str,
+    normalized_candidate: &str,
+    normalized_text: &str,
+) -> bool {
+    let token_count = normalized_candidate.split_whitespace().count();
+
+    if contains_toolish_token(normalized_candidate) {
+        return true;
+    }
+
+    if token_count >= 2
+        && token_count <= 4
+        && looks_like_product_or_tool_phrase(candidate, normalized_candidate)
+    {
+        return true;
+    }
+
+    token_count <= 3
+        && looks_like_product_name(candidate, normalized_candidate)
+        && candidate_appears_near_context(normalized_text, normalized_candidate)
+}
+
+fn contains_toolish_token(normalized_candidate: &str) -> bool {
+    candidate_toolish_tokens()
+        .iter()
+        .any(|token| contains_alias(normalized_candidate, token))
+}
+
+fn looks_like_product_or_tool_phrase(candidate: &str, normalized_candidate: &str) -> bool {
+    if normalized_candidate
+        .split_whitespace()
+        .any(|token| candidate_stopwords().contains(&token))
+    {
+        return false;
+    }
+
+    candidate
+        .split_whitespace()
+        .any(|token| is_domain_like(token) || is_acronym_token(token) || is_camel_case_token(token))
+}
+
+fn looks_like_product_name(candidate: &str, normalized_candidate: &str) -> bool {
+    if candidate_stopwords().contains(&normalized_candidate) {
+        return false;
+    }
+
+    candidate
+        .split_whitespace()
+        .any(|token| is_domain_like(token) || is_acronym_token(token) || is_camel_case_token(token))
+}
+
+fn candidate_appears_near_context(normalized_text: &str, normalized_candidate: &str) -> bool {
+    let context = context_window(normalized_text, normalized_candidate);
+    candidate_near_context_terms()
+        .iter()
+        .any(|term| contains_alias(&context, term))
+}
+
+fn is_acronym_token(token: &str) -> bool {
+    let letters = token
+        .chars()
+        .filter(|character| character.is_alphabetic())
+        .collect::<Vec<_>>();
+
+    letters.len() >= 2 && letters.iter().all(|character| character.is_uppercase())
+}
+
+fn is_camel_case_token(token: &str) -> bool {
+    let letters = token
+        .chars()
+        .filter(|character| character.is_alphabetic())
+        .collect::<Vec<_>>();
+
+    letters.len() >= 4
+        && letters.iter().any(|character| character.is_uppercase())
+        && letters
+            .iter()
+            .skip(1)
+            .any(|character| character.is_uppercase())
+        && letters.iter().any(|character| character.is_lowercase())
+}
+
+fn candidate_stopwords() -> &'static [&'static str] {
+    &[
+        "a", "an", "and", "any", "actually", "apis", "but", "can", "did", "don t", "dont", "even",
+        "everyone", "for", "good", "he", "here", "here s", "heres", "how", "if", "i", "i m", "im",
+        "it", "it s", "its", "me", "my", "one", "save", "she", "that", "the", "they", "this", "to",
+        "we", "when", "what", "who", "why", "with", "you", "your",
+    ]
+}
+
+fn candidate_toolish_tokens() -> &'static [&'static str] {
+    &[
+        "ai",
+        "agent",
+        "code",
+        "cli",
+        "sdk",
+        "mcp",
+        "graph",
+        "studio",
+        "labs",
+        "copilot",
+        "assistant",
+        "framework",
+        "server",
+        "plugin",
+    ]
+}
+
+fn candidate_near_context_terms() -> &'static [&'static str] {
+    &[
+        "tool",
+        "tools",
+        "app",
+        "framework",
+        "plugin",
+        "model",
+        "server",
+        "agent",
+        "agents",
+        "workflow",
+        "automation",
+        "coding",
+        "developer",
+    ]
 }
 
 fn stable_mention_id(post_id: &str, agent_name: &str) -> String {
@@ -518,6 +659,13 @@ mod tests {
     fn test_config() -> AliasesConfig {
         AliasesConfig {
             agents: vec![
+                AgentAliasConfig {
+                    canonical_name: "Claude Code".to_string(),
+                    category: "coding_agent".to_string(),
+                    aliases: vec!["Claude Code".to_string(), "ClaudeCode".to_string()],
+                    ambiguous: false,
+                    context_terms: Vec::new(),
+                },
                 AgentAliasConfig {
                     canonical_name: "Caveman".to_string(),
                     category: "skill_or_mode".to_string(),
@@ -679,6 +827,51 @@ mod tests {
                 && mention.category == "unknown_candidate"
                 && mention.detection_source == "candidate_pattern"
                 && mention.needs_review));
+    }
+
+    #[test]
+    fn excludes_common_capitalized_words_from_unknown_candidates() {
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "And The Any But Here Good I'm APIs Save This are common words in AI agent chatter.",
+            &test_config(),
+            &HashMap::new(),
+        );
+
+        assert!(!mentions.iter().any(|mention| {
+            mention.category == "unknown_candidate"
+                && matches!(
+                    mention.agent_name.as_str(),
+                    "And"
+                        | "The"
+                        | "Any"
+                        | "But"
+                        | "Here"
+                        | "Good"
+                        | "I'm"
+                        | "APIs"
+                        | "Save"
+                        | "This"
+                )
+        }));
+    }
+
+    #[test]
+    fn keeps_known_aliases_while_tightening_candidates() {
+        let mentions = detect_mentions_in_text(
+            "post-1",
+            "Claude Code and MCP server both help developer workflow.",
+            &test_config(),
+            &HashMap::new(),
+        );
+
+        assert!(mentions
+            .iter()
+            .any(|mention| mention.agent_name == "Claude Code"
+                && mention.detection_source == "known_alias"));
+        assert!(mentions.iter().any(
+            |mention| mention.agent_name == "MCP" && mention.detection_source == "known_alias"
+        ));
     }
 
     #[test]
