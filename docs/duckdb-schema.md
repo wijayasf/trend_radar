@@ -129,7 +129,7 @@ Aggregated weekly reporting table.
 - `trend_score`: MVP ranking score.
 - `computed_at`: Local computation timestamp.
 
-Weekly aggregation includes known aliases and approved candidates. Pending `unknown_candidate` rows and ignored candidates are excluded from Top Indonesia/Global/Unknown metrics so unreviewed discoveries do not pollute rankings.
+Weekly aggregation includes only `known_alias` mentions and approved `reviewed_candidate` mentions. Pending or ignored candidates and generic concepts such as standalone `MCP`, `AI Agent`, `HTML`, or `LLM` are excluded from Top Indonesia/Global/Unknown metrics so unreviewed or non-concrete discoveries do not pollute rankings.
 
 Rows are grouped by `week_start`, `region`, canonical entity key, and `category`. The canonical key is based on `lower(trim(agent_name))`, so casing or source-record variants such as `Claude Code` and `claude code` collapse into one row per region/week/category.
 
@@ -152,4 +152,5 @@ The score formula should move to `config/scoring.yml` when the ranking design st
 - Schema initialization uses additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migrations; there is no `agent_mentions_compatible` table or view.
 - A fuller migration system should be introduced only when schema changes become frequent or data migration becomes risky.
 - The Apify connector is an experimental fallback. Its extra source metadata is additive and should be reviewed for compliance before production use.
+- Apify applies an entity-first gate before raw storage. Generic AI/MCP context is not sufficient; a known concrete alias or strict product-like unknown candidate must be detected.
 - Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.

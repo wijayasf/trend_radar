@@ -127,27 +127,38 @@ pub struct ApifyDiscoveryResult {
     pub filtered_out_total: usize,
     pub saved_total: usize,
     pub duplicates_skipped: usize,
-    pub detected_relevance_count: usize,
-    pub included_by_context_count: usize,
+    pub entity_gate_included_total: usize,
+    pub entity_gate_filtered_total: usize,
     pub filtered_out_by_reason: ApifyFilterReasons,
-    pub sample_saved_posts: Vec<ApifySamplePost>,
+    pub sample_filtered_out: Vec<ApifyFilteredPostSample>,
+    pub sample_included: Vec<ApifyIncludedPostSample>,
     pub safe_error_summary: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ApifyFilterReasons {
+    pub no_named_entity: usize,
+    pub generic_mcp_only: usize,
+    pub generic_ai_agent_only: usize,
+    pub generic_threadbait: usize,
+    pub ambiguous_without_entity: usize,
     pub empty_text: usize,
-    pub no_ai_context: usize,
-    pub ambiguous_without_context: usize,
     pub duplicate: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ApifySamplePost {
+pub struct ApifyIncludedPostSample {
     pub post_id: String,
     pub text_snippet: String,
     pub source_seed_keyword: String,
     pub permalink: String,
+    pub detected_entities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApifyFilteredPostSample {
+    pub text_snippet: String,
+    pub reason: String,
 }
 
 impl DiscoveryKeywordGroups {

@@ -7,9 +7,10 @@ use reqwest::StatusCode;
 use serde_json::Value;
 
 use crate::models::threads::{
-    ApifyDiscoveryResult, ApifyFilterReasons, ApifySamplePost, ThreadPostRaw,
+    ApifyDiscoveryResult, ApifyFilterReasons, ApifyFilteredPostSample, ApifyIncludedPostSample,
+    ThreadPostRaw,
 };
-use crate::services::duckdb_service;
+use crate::services::{duckdb_service, entity_detector};
 use crate::utils::config;
 
 const APIFY_TOKEN_ENV: &str = "APIFY_TOKEN";
@@ -30,35 +31,16 @@ const DEFAULT_APIFY_SEEDS: &[&str] = &[
     "Astryx AI",
 ];
 
-const AI_CONTEXT_TERMS: &[&str] = &[
-    "ai",
-    "agent",
-    "agents",
-    "agentic",
-    "claude code",
-    "codex",
-    "mcp",
-    "cursor",
-    "cline",
-    "coding",
-    "developer",
-    "workflow",
-    "automation",
-    "llm",
-    "llms",
-    "langgraph",
-    "crewai",
-    "autogen",
-    "plugin",
-    "sdk",
-    "cli",
-    "server",
-    "framework",
-    "model",
-    "tool",
-];
-
 const AMBIGUOUS_TERMS: &[&str] = &["ponytail", "caveman", "cavemen"];
+const GENERIC_AI_AGENT_TERMS: &[&str] = &["ai agent", "ai agents", "agentic ai"];
+const GENERIC_MCP_TERMS: &[&str] = &["mcp", "mcp server", "model context protocol"];
+const THREADBAIT_TERMS: &[&str] = &[
+    "save for later",
+    "entire business",
+    "team of 5 ai agents",
+    "here's what they do",
+    "heres what they do",
+];
 
 pub fn run_apify_discovery_crawl(
     seeds: Option<Vec<String>>,
@@ -71,9 +53,10 @@ pub fn run_apify_discovery_crawl(
 
     let actor_id = read_actor_id();
     let max_posts = max_per_seed.unwrap_or(DEFAULT_MAX_PER_SEED).max(1);
+    let entity_gate = entity_detector::NamedEntityGateDetector::load()?;
     let (items, actor_run_id) = call_apify_actor(&actor_id, &seeds, max_posts)?;
     let fetched_total = items.len();
-    let normalized = normalize_filter_and_dedupe_items(items);
+    let normalized = normalize_filter_and_dedupe_items(items, &entity_gate);
     let saved_total = duckdb_service::save_threads_raw_posts(&normalized.posts)?;
 
     Ok(ApifyDiscoveryResult {
@@ -84,10 +67,11 @@ pub fn run_apify_discovery_crawl(
         filtered_out_total: normalized.filtered_out_total(),
         saved_total,
         duplicates_skipped: normalized.filter_reasons.duplicate,
-        detected_relevance_count: normalized.detected_relevance_count,
-        included_by_context_count: normalized.detected_relevance_count,
+        entity_gate_included_total: normalized.entity_gate_included_total,
+        entity_gate_filtered_total: normalized.entity_gate_filtered_total,
         filtered_out_by_reason: normalized.filter_reasons,
-        sample_saved_posts: normalized.sample_saved_posts,
+        sample_filtered_out: normalized.sample_filtered_out,
+        sample_included: normalized.sample_included,
         safe_error_summary: String::new(),
     })
 }
@@ -146,45 +130,49 @@ fn call_apify_actor(
     Ok((parse_apify_items(&body_json)?, actor_run_id))
 }
 
-fn normalize_filter_and_dedupe_items(items: Vec<Value>) -> NormalizedApifyItems {
+fn normalize_filter_and_dedupe_items(
+    items: Vec<Value>,
+    entity_gate: &entity_detector::NamedEntityGateDetector,
+) -> NormalizedApifyItems {
     let mut filter_reasons = ApifyFilterReasons::default();
     let mut seen_ids = HashSet::new();
     let mut posts = Vec::new();
-    let mut sample_saved_posts = Vec::new();
-    let mut detected_relevance_count = 0;
+    let mut sample_filtered_out = Vec::new();
+    let mut sample_included = Vec::new();
+    let mut entity_gate_included_total = 0;
+    let mut entity_gate_filtered_total = 0;
 
     for item in items {
         let text = string_field(&item, "text_content");
-        match relevance_decision(&text) {
-            RelevanceDecision::Include => {
-                detected_relevance_count += 1;
+        let detected_entities = match entity_gate_decision(&text, entity_gate) {
+            EntityGateDecision::Include(detected_entities) => {
+                entity_gate_included_total += 1;
+                detected_entities
             }
-            RelevanceDecision::Exclude(reason) => {
-                match reason {
-                    FilterReason::EmptyText => filter_reasons.empty_text += 1,
-                    FilterReason::NoAiContext => filter_reasons.no_ai_context += 1,
-                    FilterReason::AmbiguousWithoutContext => {
-                        filter_reasons.ambiguous_without_context += 1
-                    }
-                }
+            EntityGateDecision::Exclude(reason) => {
+                entity_gate_filtered_total += 1;
+                record_filter_reason(&mut filter_reasons, reason);
+                push_filtered_sample(&mut sample_filtered_out, &text, reason);
                 continue;
             }
-        }
+        };
 
         let external_id = post_external_id(&item);
         if external_id.is_empty() || !seen_ids.insert(external_id.clone()) {
             filter_reasons.duplicate += 1;
+            push_filtered_sample(&mut sample_filtered_out, &text, FilterReason::Duplicate);
             continue;
         }
 
         let source_seed_keyword = string_field(&item, "search_keyword");
         let permalink = string_field(&item, "post_url");
-        if sample_saved_posts.len() < SAMPLE_LIMIT {
-            sample_saved_posts.push(ApifySamplePost {
+        if sample_included.len() < SAMPLE_LIMIT {
+            sample_included.push(ApifyIncludedPostSample {
                 post_id: external_id.clone(),
                 text_snippet: safe_snippet(&text),
                 source_seed_keyword: source_seed_keyword.clone(),
                 permalink: permalink.clone(),
+                detected_entities,
             });
         }
 
@@ -214,33 +202,85 @@ fn normalize_filter_and_dedupe_items(items: Vec<Value>) -> NormalizedApifyItems 
     NormalizedApifyItems {
         posts,
         filter_reasons,
-        detected_relevance_count,
-        sample_saved_posts,
+        entity_gate_included_total,
+        entity_gate_filtered_total,
+        sample_filtered_out,
+        sample_included,
     }
 }
 
-fn relevance_decision(text: &str) -> RelevanceDecision {
+fn entity_gate_decision(
+    text: &str,
+    entity_gate: &entity_detector::NamedEntityGateDetector,
+) -> EntityGateDecision {
     let normalized = text.trim().to_lowercase();
     if normalized.is_empty() {
-        return RelevanceDecision::Exclude(FilterReason::EmptyText);
+        return EntityGateDecision::Exclude(FilterReason::EmptyText);
     }
 
-    let has_ai_context = AI_CONTEXT_TERMS
+    let detected_entities = entity_gate
+        .detect(text)
+        .into_iter()
+        .map(|entity| entity.entity_name)
+        .collect::<Vec<_>>();
+    if !detected_entities.is_empty() {
+        return EntityGateDecision::Include(detected_entities);
+    }
+
+    if THREADBAIT_TERMS
         .iter()
-        .any(|term| contains_context_term(&normalized, term));
-    let has_ambiguous_term = AMBIGUOUS_TERMS
+        .any(|term| normalized.contains(term))
+    {
+        return EntityGateDecision::Exclude(FilterReason::GenericThreadbait);
+    }
+
+    if GENERIC_MCP_TERMS
         .iter()
-        .any(|term| contains_context_term(&normalized, term));
-
-    if has_ambiguous_term && !has_ai_context {
-        return RelevanceDecision::Exclude(FilterReason::AmbiguousWithoutContext);
+        .any(|term| contains_context_term(&normalized, term))
+    {
+        return EntityGateDecision::Exclude(FilterReason::GenericMcpOnly);
     }
 
-    if !has_ai_context {
-        return RelevanceDecision::Exclude(FilterReason::NoAiContext);
+    if GENERIC_AI_AGENT_TERMS
+        .iter()
+        .any(|term| contains_context_term(&normalized, term))
+    {
+        return EntityGateDecision::Exclude(FilterReason::GenericAiAgentOnly);
     }
 
-    RelevanceDecision::Include
+    if AMBIGUOUS_TERMS
+        .iter()
+        .any(|term| contains_context_term(&normalized, term))
+    {
+        return EntityGateDecision::Exclude(FilterReason::AmbiguousWithoutEntity);
+    }
+
+    EntityGateDecision::Exclude(FilterReason::NoNamedEntity)
+}
+
+fn record_filter_reason(reasons: &mut ApifyFilterReasons, reason: FilterReason) {
+    match reason {
+        FilterReason::NoNamedEntity => reasons.no_named_entity += 1,
+        FilterReason::GenericMcpOnly => reasons.generic_mcp_only += 1,
+        FilterReason::GenericAiAgentOnly => reasons.generic_ai_agent_only += 1,
+        FilterReason::GenericThreadbait => reasons.generic_threadbait += 1,
+        FilterReason::AmbiguousWithoutEntity => reasons.ambiguous_without_entity += 1,
+        FilterReason::EmptyText => reasons.empty_text += 1,
+        FilterReason::Duplicate => reasons.duplicate += 1,
+    }
+}
+
+fn push_filtered_sample(
+    samples: &mut Vec<ApifyFilteredPostSample>,
+    text: &str,
+    reason: FilterReason,
+) {
+    if samples.len() < SAMPLE_LIMIT {
+        samples.push(ApifyFilteredPostSample {
+            text_snippet: safe_snippet(text),
+            reason: reason.as_str().to_string(),
+        });
+    }
 }
 
 fn contains_context_term(text: &str, term: &str) -> bool {
@@ -376,28 +416,46 @@ fn format_apify_error(status: StatusCode, body_json: &Value) -> String {
 struct NormalizedApifyItems {
     posts: Vec<ThreadPostRaw>,
     filter_reasons: ApifyFilterReasons,
-    detected_relevance_count: usize,
-    sample_saved_posts: Vec<ApifySamplePost>,
+    entity_gate_included_total: usize,
+    entity_gate_filtered_total: usize,
+    sample_filtered_out: Vec<ApifyFilteredPostSample>,
+    sample_included: Vec<ApifyIncludedPostSample>,
 }
 
 impl NormalizedApifyItems {
     fn filtered_out_total(&self) -> usize {
-        self.filter_reasons.empty_text
-            + self.filter_reasons.no_ai_context
-            + self.filter_reasons.ambiguous_without_context
-            + self.filter_reasons.duplicate
+        self.entity_gate_filtered_total + self.filter_reasons.duplicate
     }
 }
 
-enum RelevanceDecision {
-    Include,
+enum EntityGateDecision {
+    Include(Vec<String>),
     Exclude(FilterReason),
 }
 
+#[derive(Clone, Copy)]
 enum FilterReason {
+    NoNamedEntity,
+    GenericMcpOnly,
+    GenericAiAgentOnly,
+    GenericThreadbait,
+    AmbiguousWithoutEntity,
     EmptyText,
-    NoAiContext,
-    AmbiguousWithoutContext,
+    Duplicate,
+}
+
+impl FilterReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NoNamedEntity => "no_named_entity",
+            Self::GenericMcpOnly => "generic_mcp_only",
+            Self::GenericAiAgentOnly => "generic_ai_agent_only",
+            Self::GenericThreadbait => "generic_threadbait",
+            Self::AmbiguousWithoutEntity => "ambiguous_without_entity",
+            Self::EmptyText => "empty_text",
+            Self::Duplicate => "duplicate",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -405,43 +463,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn filters_apify_threads_results_for_ai_agent_relevance() {
+    fn requires_named_entities_for_apify_discovery() {
         let items = vec![
             serde_json::json!({
-                "post_code": "apify-ai-agent",
-                "text_content": "AI Agent roadmap for developer workflow",
+                "post_code": "generic-threadbait",
+                "text_content": "I built a team of 5 AI agents that run my ENTIRE business. Here's what they do. (save for later)",
                 "search_keyword": "AI Agent",
-                "post_url": "https://threads.net/t/apify-ai-agent"
+                "post_url": "https://threads.net/t/generic-threadbait"
             }),
             serde_json::json!({
-                "post_code": "apify-claude-code",
-                "text_content": "Claude Code subscription is useful for coding automation",
-                "search_keyword": "Claude Code",
-                "post_url": "https://threads.net/t/apify-claude-code"
+                "post_code": "generic-html-mcp",
+                "text_content": "HTML blocks now work with any agent via MCP.",
+                "search_keyword": "MCP server",
+                "post_url": "https://threads.net/t/generic-html-mcp"
             }),
             serde_json::json!({
-                "post_code": "apify-ponytail-hair",
-                "text_content": "Who can do a ponytail braid?",
-                "search_keyword": "Ponytail",
-                "post_url": "https://threads.net/t/apify-ponytail-hair"
+                "post_code": "generic-mcp-server",
+                "text_content": "We built an MCP server and weekly usage tripled.",
+                "search_keyword": "MCP server",
+                "post_url": "https://threads.net/t/generic-mcp-server"
             }),
             serde_json::json!({
-                "post_code": "apify-caveman-cartoon",
-                "text_content": "Captain Caveman is on TV again",
-                "search_keyword": "Cavemen",
-                "post_url": "https://threads.net/t/apify-caveman-cartoon"
+                "post_code": "generic-agentic-ai",
+                "text_content": "Who wants to learn Agentic AI?",
+                "search_keyword": "Agentic AI",
+                "post_url": "https://threads.net/t/generic-agentic-ai"
             }),
             serde_json::json!({
-                "post_code": "apify-ponytail-claude",
+                "post_code": "named-graphify",
+                "text_content": "Graphify helps reduce token usage for agent memory.",
+                "search_keyword": "AI Agent",
+                "post_url": "https://threads.net/t/named-graphify"
+            }),
+            serde_json::json!({
+                "post_code": "named-headroom",
+                "text_content": "Headroom is useful for managing agent workflow.",
+                "search_keyword": "AI Agent",
+                "post_url": "https://threads.net/t/named-headroom"
+            }),
+            serde_json::json!({
+                "post_code": "named-ponytail-claude",
                 "text_content": "Ponytail feels useful for Claude Code workflow",
                 "search_keyword": "Ponytail Claude Code",
-                "post_url": "https://threads.net/t/apify-ponytail-claude"
+                "post_url": "https://threads.net/t/named-ponytail-claude"
             }),
             serde_json::json!({
-                "post_code": "apify-cavemen-claude",
-                "text_content": "Cavemen mode Claude Code keeps the coding workflow focused",
-                "search_keyword": "Cavemen Claude Code",
-                "post_url": "https://threads.net/t/apify-cavemen-claude"
+                "post_code": "named-claude-code",
+                "text_content": "Claude Code now has a built-in iOS simulator.",
+                "search_keyword": "Claude Code",
+                "post_url": "https://threads.net/t/named-claude-code"
+            }),
+            serde_json::json!({
+                "post_code": "named-graphify-mcp",
+                "text_content": "We built Graphify MCP server for agent memory.",
+                "search_keyword": "MCP server",
+                "post_url": "https://threads.net/t/named-graphify-mcp"
             }),
             serde_json::json!({
                 "post_code": "apify-empty",
@@ -456,36 +532,59 @@ mod tests {
                 "post_url": "https://threads.net/t/apify-lifestyle"
             }),
             serde_json::json!({
-                "post_code": "apify-ai-agent",
-                "text_content": "AI Agent roadmap duplicate",
+                "post_code": "ambiguous-ponytail",
+                "text_content": "Who can do a ponytail braid?",
+                "search_keyword": "Ponytail",
+                "post_url": "https://threads.net/t/ambiguous-ponytail"
+            }),
+            serde_json::json!({
+                "post_code": "named-graphify",
+                "text_content": "Graphify helps agent memory. Duplicate result.",
                 "search_keyword": "AI Agent",
-                "post_url": "https://threads.net/t/apify-ai-agent-duplicate"
+                "post_url": "https://threads.net/t/named-graphify-duplicate"
             }),
         ];
+        let entity_gate = entity_detector::NamedEntityGateDetector::load()
+            .expect("aliases config should load for entity gate test");
 
-        let normalized = normalize_filter_and_dedupe_items(items);
+        let normalized = normalize_filter_and_dedupe_items(items, &entity_gate);
 
-        assert_eq!(normalized.posts.len(), 4);
-        assert_eq!(normalized.detected_relevance_count, 5);
+        assert_eq!(normalized.posts.len(), 5);
+        assert_eq!(normalized.entity_gate_included_total, 6);
+        assert_eq!(normalized.entity_gate_filtered_total, 7);
+        assert_eq!(normalized.filter_reasons.generic_threadbait, 1);
+        assert_eq!(normalized.filter_reasons.generic_mcp_only, 2);
+        assert_eq!(normalized.filter_reasons.generic_ai_agent_only, 1);
         assert_eq!(normalized.filter_reasons.empty_text, 1);
-        assert_eq!(normalized.filter_reasons.no_ai_context, 1);
-        assert_eq!(normalized.filter_reasons.ambiguous_without_context, 2);
+        assert_eq!(normalized.filter_reasons.no_named_entity, 1);
+        assert_eq!(normalized.filter_reasons.ambiguous_without_entity, 1);
         assert_eq!(normalized.filter_reasons.duplicate, 1);
         assert!(normalized
             .posts
             .iter()
-            .any(|post| post.post_id == "apify-ai-agent"));
+            .any(|post| post.post_id == "named-graphify"));
         assert!(normalized
             .posts
             .iter()
-            .any(|post| post.post_id == "apify-claude-code"));
+            .any(|post| post.post_id == "named-headroom"));
         assert!(normalized
             .posts
             .iter()
-            .any(|post| post.post_id == "apify-ponytail-claude"));
+            .any(|post| post.post_id == "named-ponytail-claude"));
         assert!(normalized
             .posts
             .iter()
-            .any(|post| post.post_id == "apify-cavemen-claude"));
+            .any(|post| post.post_id == "named-claude-code"));
+        assert!(normalized
+            .posts
+            .iter()
+            .any(|post| post.post_id == "named-graphify-mcp"));
+        assert!(normalized.sample_included.iter().any(|sample| {
+            sample.post_id == "named-ponytail-claude"
+                && sample.detected_entities.contains(&"Ponytail".to_string())
+                && sample
+                    .detected_entities
+                    .contains(&"Claude Code".to_string())
+        }));
     }
 }

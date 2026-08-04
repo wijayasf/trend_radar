@@ -4,13 +4,50 @@ use std::path::PathBuf;
 
 use crate::models::entities::{
     AgentAliasConfig, AliasesConfig, DetectedAgentMention, EntityDetectionResult,
-    EntityReviewDecision,
+    EntityReviewDecision, NamedEntityGateMatch,
 };
 use crate::services::duckdb_service;
 
 const ALIASES_CONFIG_PATH: &str = "config/aliases.yml";
 const PREVIEW_LIMIT: usize = 12;
 const SNIPPET_LIMIT: usize = 180;
+
+pub struct NamedEntityGateDetector {
+    config: AliasesConfig,
+}
+
+impl NamedEntityGateDetector {
+    pub fn load() -> Result<Self, String> {
+        Ok(Self {
+            config: load_aliases_config()?,
+        })
+    }
+
+    pub fn detect(&self, text: &str) -> Vec<NamedEntityGateMatch> {
+        let normalized_text = normalize_text(text);
+        let mentions =
+            detect_mentions_in_text("named-entity-gate", text, &self.config, &HashMap::new());
+        let has_other_concrete_entity = mentions.iter().any(|mention| {
+            !is_gate_context_only_entity(&mention.agent_name)
+                && !is_gate_ambiguous_entity(&mention.agent_name)
+        });
+
+        mentions
+            .into_iter()
+            .filter(|mention| !is_gate_context_only_entity(&mention.agent_name))
+            .filter(|mention| {
+                !is_gate_ambiguous_entity(&mention.agent_name)
+                    || has_other_concrete_entity
+                    || has_candidate_context(&normalized_text)
+            })
+            .map(|mention| NamedEntityGateMatch {
+                entity_name: mention.agent_name,
+                category: mention.category,
+                detection_source: mention.detection_source,
+            })
+            .collect()
+    }
+}
 
 pub fn detect_agent_mentions() -> Result<EntityDetectionResult, String> {
     let config = load_aliases_config()?;
@@ -369,26 +406,43 @@ fn known_aliases(config: &AliasesConfig) -> HashSet<String> {
     aliases
 }
 
+fn is_gate_context_only_entity(entity_name: &str) -> bool {
+    matches!(normalize_text(entity_name).as_str(), "mcp")
+}
+
+fn is_gate_ambiguous_entity(entity_name: &str) -> bool {
+    matches!(normalize_text(entity_name).as_str(), "ponytail" | "caveman")
+}
+
 fn has_candidate_context(normalized_text: &str) -> bool {
     candidate_context_terms()
         .iter()
         .any(|term| contains_alias(normalized_text, term))
 }
 
-fn candidate_context_terms() -> [&'static str; 12] {
-    [
+fn candidate_context_terms() -> &'static [&'static str] {
+    &[
         "ai",
         "agent",
         "agents",
         "agentic",
-        "coding",
-        "code",
+        "skill",
+        "skills",
+        "mcp",
+        "mcp server",
+        "plugin",
+        "tool",
         "tools",
-        "developer",
+        "framework",
         "workflow",
         "workflows",
+        "automation",
+        "coding",
+        "code",
+        "developer",
+        "memory",
+        "token",
         "server",
-        "skills",
     ]
 }
 
@@ -417,13 +471,16 @@ fn extract_candidate_names(text: &str) -> Vec<String> {
         let mut phrase = vec![token.to_string()];
         let mut next = index + 1;
         while next < tokens.len()
-            && phrase.len() < 4
+            && phrase.len() < 3
             && is_capitalized_candidate_token(tokens[next])
         {
             phrase.push(tokens[next].to_string());
             next += 1;
         }
 
+        if phrase.len() > 1 {
+            candidates.extend(phrase.iter().cloned());
+        }
         candidates.push(phrase.join(" "));
         index = next;
     }
@@ -470,14 +527,33 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
     let stop_phrases = [
         "ada",
         "agent",
+        "agent come",
+        "agentic",
+        "agentic ai",
         "ai",
         "ai agent",
+        "ai agents",
         "agent trend radar",
         "ai agent trend",
         "ai coding",
+        "api",
+        "apis",
+        "breaking claude",
         "developer",
+        "entire",
+        "genx ers",
+        "html",
         "indonesia",
+        "large action models",
+        "large language models",
+        "llm",
+        "llms",
+        "mcp",
+        "mcp server",
         "model context protocol",
+        "plugin",
+        "same breath",
+        "skill",
         "testing",
         "threads",
         "tools",
@@ -494,27 +570,25 @@ fn is_meaningful_unknown_candidate(
     normalized_text: &str,
 ) -> bool {
     let token_count = normalized_candidate.split_whitespace().count();
+    if token_count == 0 || token_count > 3 {
+        return false;
+    }
 
-    if contains_toolish_token(normalized_candidate) {
+    if !candidate_appears_near_context(normalized_text, normalized_candidate) {
+        return false;
+    }
+
+    if unknown_candidate_allowlist().contains(&normalized_candidate) {
         return true;
     }
 
-    if token_count >= 2
-        && token_count <= 4
-        && looks_like_product_or_tool_phrase(candidate, normalized_candidate)
-    {
-        return true;
+    if token_count == 1 {
+        return candidate.split_whitespace().any(|token| {
+            is_domain_like(token) || is_camel_case_token(token) || has_product_name_affix(token)
+        });
     }
 
-    token_count <= 3
-        && looks_like_product_name(candidate, normalized_candidate)
-        && candidate_appears_near_context(normalized_text, normalized_candidate)
-}
-
-fn contains_toolish_token(normalized_candidate: &str) -> bool {
-    candidate_toolish_tokens()
-        .iter()
-        .any(|token| contains_alias(normalized_candidate, token))
+    looks_like_product_or_tool_phrase(candidate, normalized_candidate)
 }
 
 fn looks_like_product_or_tool_phrase(candidate: &str, normalized_candidate: &str) -> bool {
@@ -525,19 +599,12 @@ fn looks_like_product_or_tool_phrase(candidate: &str, normalized_candidate: &str
         return false;
     }
 
-    candidate
-        .split_whitespace()
-        .any(|token| is_domain_like(token) || is_acronym_token(token) || is_camel_case_token(token))
-}
-
-fn looks_like_product_name(candidate: &str, normalized_candidate: &str) -> bool {
-    if candidate_stopwords().contains(&normalized_candidate) {
-        return false;
-    }
-
-    candidate
-        .split_whitespace()
-        .any(|token| is_domain_like(token) || is_acronym_token(token) || is_camel_case_token(token))
+    candidate.split_whitespace().any(|token| {
+        is_domain_like(token)
+            || is_acronym_token(token)
+            || is_camel_case_token(token)
+            || has_product_name_affix(token)
+    })
 }
 
 fn candidate_appears_near_context(normalized_text: &str, normalized_candidate: &str) -> bool {
@@ -571,12 +638,21 @@ fn is_camel_case_token(token: &str) -> bool {
         && letters.iter().any(|character| character.is_lowercase())
 }
 
+fn has_product_name_affix(token: &str) -> bool {
+    let normalized = token.to_ascii_lowercase();
+    candidate_toolish_tokens()
+        .iter()
+        .any(|affix| normalized.starts_with(affix) || normalized.ends_with(affix))
+}
+
 fn candidate_stopwords() -> &'static [&'static str] {
     &[
-        "a", "an", "and", "any", "actually", "apis", "but", "can", "did", "don t", "dont", "even",
-        "everyone", "for", "good", "he", "here", "here s", "heres", "how", "if", "i", "i m", "im",
-        "it", "it s", "its", "me", "my", "one", "save", "she", "that", "the", "they", "this", "to",
-        "we", "when", "what", "who", "why", "with", "you", "your",
+        "a", "an", "actually", "agentic", "and", "any", "api", "apis", "breaking", "but", "can",
+        "claude", "did", "don t", "dont", "entire", "even", "everyone", "for", "genx ers", "good",
+        "he", "here", "here s", "heres", "how", "html", "i", "if", "i m", "im", "it", "it s",
+        "its", "large", "llm", "llms", "mcp", "me", "models", "my", "one", "plugin", "same",
+        "save", "she", "skill", "that", "the", "they", "this", "to", "we", "what", "when", "who",
+        "why", "with", "you", "your",
     ]
 }
 
@@ -596,7 +672,12 @@ fn candidate_toolish_tokens() -> &'static [&'static str] {
         "framework",
         "server",
         "plugin",
+        "flow",
     ]
+}
+
+fn unknown_candidate_allowlist() -> &'static [&'static str] {
+    &["graphify", "headroom"]
 }
 
 fn candidate_near_context_terms() -> &'static [&'static str] {
@@ -606,7 +687,9 @@ fn candidate_near_context_terms() -> &'static [&'static str] {
         "app",
         "framework",
         "plugin",
+        "skill",
         "model",
+        "mcp",
         "server",
         "agent",
         "agents",
@@ -614,6 +697,8 @@ fn candidate_near_context_terms() -> &'static [&'static str] {
         "automation",
         "coding",
         "developer",
+        "memory",
+        "token",
     ]
 }
 
@@ -830,6 +915,73 @@ mod tests {
     }
 
     #[test]
+    fn accepts_strict_brand_like_unknown_candidates() {
+        for (text, expected_name) in [
+            (
+                "Graphify helps reduce token usage for agent memory.",
+                "Graphify",
+            ),
+            (
+                "Headroom is useful for managing agent workflow.",
+                "Headroom",
+            ),
+            ("MemoryFlow improves developer automation.", "MemoryFlow"),
+        ] {
+            let mentions =
+                detect_mentions_in_text("post-brand", text, &test_config(), &HashMap::new());
+            assert!(mentions.iter().any(|mention| {
+                mention.agent_name == expected_name
+                    && mention.category == "unknown_candidate"
+                    && mention.review_status == "pending"
+                    && mention.needs_review
+            }));
+        }
+    }
+
+    #[test]
+    fn entity_gate_rejects_generic_concepts_and_accepts_named_entities() {
+        let detector = NamedEntityGateDetector {
+            config: test_config(),
+        };
+
+        for text in [
+            "I built a team of 5 AI agents that run my ENTIRE business. Here's what they do. (save for later)",
+            "HTML blocks now work with any agent via MCP.",
+            "We built an MCP server and weekly usage tripled.",
+            "Who wants to learn Agentic AI?",
+        ] {
+            assert!(
+                detector.detect(text).is_empty(),
+                "generic text passed entity gate: {text}"
+            );
+        }
+
+        let graphify = detector.detect("Graphify helps reduce token usage for agent memory.");
+        assert!(graphify.iter().any(|entity| {
+            entity.entity_name == "Graphify"
+                && entity.category == "unknown_candidate"
+                && entity.detection_source == "candidate_pattern"
+        }));
+
+        let headroom = detector.detect("Headroom is useful for managing agent workflow.");
+        assert!(headroom.iter().any(|entity| {
+            entity.entity_name == "Headroom" && entity.category == "unknown_candidate"
+        }));
+
+        let ponytail = detector.detect("Ponytail feels useful for Claude Code workflow.");
+        assert!(ponytail.iter().any(|entity| {
+            entity.entity_name == "Ponytail"
+                && entity.category == "skill_or_mode"
+                && entity.detection_source == "known_alias"
+        }));
+        assert!(ponytail.iter().any(|entity| {
+            entity.entity_name == "Claude Code"
+                && entity.category == "coding_agent"
+                && entity.detection_source == "known_alias"
+        }));
+    }
+
+    #[test]
     fn excludes_common_capitalized_words_from_unknown_candidates() {
         let mentions = detect_mentions_in_text(
             "post-1",
@@ -854,6 +1006,20 @@ mod tests {
                         | "This"
                 )
         }));
+    }
+
+    #[test]
+    fn excludes_generic_concepts_and_threadbait_fragments_from_candidates() {
+        let mentions = detect_mentions_in_text(
+            "post-generic-candidates",
+            "HTML LLM LLMs MCP API APIs ENTIRE SAME BREATH BREAKING Claude Agentic Agent Come Good Save The And But Here How Any Can Did Don't For I'm It's Everyone GenX'ers Large Action Models Large Language Models appear near AI agent workflow.",
+            &test_config(),
+            &HashMap::new(),
+        );
+
+        assert!(!mentions
+            .iter()
+            .any(|mention| mention.category == "unknown_candidate"));
     }
 
     #[test]

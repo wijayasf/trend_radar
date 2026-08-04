@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_weekly_metrics_group_canonical_entities() {
+    fn validates_weekly_metrics_group_canonical_entities_and_exclude_generic_mcp() {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-weekly-canonical-test.duckdb");
         cleanup_database_files(&database_path);
@@ -141,8 +141,7 @@ mod tests {
 
         assert_eq!(claude_rows.len(), 1);
         assert_eq!(claude_rows[0].mentions, 2);
-        assert_eq!(mcp_rows.len(), 1);
-        assert_eq!(mcp_rows[0].mentions, 2);
+        assert!(mcp_rows.is_empty());
 
         cleanup_database_files(&database_path);
     }

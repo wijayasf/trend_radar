@@ -7,19 +7,19 @@
       number: '1',
       key: 'discovery',
       label: 'Discovery',
-      description: 'Find broad AI Agent conversation and collect raw posts.',
+      description: 'Keep posts only when a concrete named entity can be extracted.',
     },
     {
       number: '2',
       key: 'entities',
       label: 'Entity Detection',
-      description: 'Extract tools, agents, skills, MCP terms, and candidates.',
+      description: 'Extract named AI agents, skills, MCP servers, frameworks, and tools.',
     },
     {
       number: '3',
       key: 'candidates',
       label: 'Candidate Review',
-      description: 'Approve, ignore, or normalize newly discovered names.',
+      description: 'Review meaningful newly discovered product or tool names.',
     },
     {
       number: '4',
@@ -84,12 +84,17 @@
   let apifyActorId = 'none';
   let apifyActorRunId = 'none';
   let apifyFilteredOutTotal = 0;
-  let apifyDetectedRelevanceCount = 0;
+  let apifyEntityGateIncludedTotal = 0;
+  let apifyEntityGateFilteredTotal = 0;
+  let apifyFilterNoNamedEntity = 0;
+  let apifyFilterGenericMcpOnly = 0;
+  let apifyFilterGenericAiAgentOnly = 0;
+  let apifyFilterGenericThreadbait = 0;
+  let apifyFilterAmbiguousWithoutEntity = 0;
   let apifyFilterEmptyText = 0;
-  let apifyFilterNoAiContext = 0;
-  let apifyFilterAmbiguousWithoutContext = 0;
   let apifyFilterDuplicate = 0;
-  let apifySampleSavedPosts: ApifySamplePost[] = [];
+  let apifySampleIncluded: ApifyIncludedPostSample[] = [];
+  let apifySampleFilteredOut: ApifyFilteredPostSample[] = [];
   let keyword = 'AI Agent';
   let collectStatus = 'Idle';
   let fetchedCount = 0;
@@ -261,25 +266,35 @@
     filtered_out_total: number;
     saved_total: number;
     duplicates_skipped: number;
-    detected_relevance_count: number;
-    included_by_context_count: number;
+    entity_gate_included_total: number;
+    entity_gate_filtered_total: number;
     filtered_out_by_reason: ApifyFilterReasons;
-    sample_saved_posts: ApifySamplePost[];
+    sample_filtered_out: ApifyFilteredPostSample[];
+    sample_included: ApifyIncludedPostSample[];
     safe_error_summary: string;
   };
 
   type ApifyFilterReasons = {
+    no_named_entity: number;
+    generic_mcp_only: number;
+    generic_ai_agent_only: number;
+    generic_threadbait: number;
+    ambiguous_without_entity: number;
     empty_text: number;
-    no_ai_context: number;
-    ambiguous_without_context: number;
     duplicate: number;
   };
 
-  type ApifySamplePost = {
+  type ApifyIncludedPostSample = {
     post_id: string;
     text_snippet: string;
     source_seed_keyword: string;
     permalink: string;
+    detected_entities: string[];
+  };
+
+  type ApifyFilteredPostSample = {
+    text_snippet: string;
+    reason: string;
   };
 
   type AgentMentionPreview = {
@@ -692,12 +707,17 @@
     apifyActorId = 'none';
     apifyActorRunId = 'none';
     apifyFilteredOutTotal = 0;
-    apifyDetectedRelevanceCount = 0;
+    apifyEntityGateIncludedTotal = 0;
+    apifyEntityGateFilteredTotal = 0;
+    apifyFilterNoNamedEntity = 0;
+    apifyFilterGenericMcpOnly = 0;
+    apifyFilterGenericAiAgentOnly = 0;
+    apifyFilterGenericThreadbait = 0;
+    apifyFilterAmbiguousWithoutEntity = 0;
     apifyFilterEmptyText = 0;
-    apifyFilterNoAiContext = 0;
-    apifyFilterAmbiguousWithoutContext = 0;
     apifyFilterDuplicate = 0;
-    apifySampleSavedPosts = [];
+    apifySampleIncluded = [];
+    apifySampleFilteredOut = [];
   }
 
   async function loadCandidateEntities() {
@@ -825,18 +845,23 @@
         discoverySavedTotal = result.saved_total;
         discoveryDuplicatesSkipped = result.duplicates_skipped;
         discoverySeedsProcessed = seeds.length;
-        discoveryStatus = `Apify fallback saved ${result.saved_total} posts after filtering ${result.filtered_out_total} of ${result.fetched_total} fetched items.`;
+        discoveryStatus = `Apify fallback kept ${result.saved_total} posts with named entities and filtered ${result.filtered_out_total} of ${result.fetched_total} fetched items.`;
         discoveryLastErrorSummary = result.safe_error_summary || 'none';
         apifyActorId = result.actor_id;
         apifyActorRunId = result.actor_run_id;
         apifyFilteredOutTotal = result.filtered_out_total;
-        apifyDetectedRelevanceCount = result.detected_relevance_count;
+        apifyEntityGateIncludedTotal = result.entity_gate_included_total;
+        apifyEntityGateFilteredTotal = result.entity_gate_filtered_total;
+        apifyFilterNoNamedEntity = result.filtered_out_by_reason.no_named_entity;
+        apifyFilterGenericMcpOnly = result.filtered_out_by_reason.generic_mcp_only;
+        apifyFilterGenericAiAgentOnly = result.filtered_out_by_reason.generic_ai_agent_only;
+        apifyFilterGenericThreadbait = result.filtered_out_by_reason.generic_threadbait;
+        apifyFilterAmbiguousWithoutEntity =
+          result.filtered_out_by_reason.ambiguous_without_entity;
         apifyFilterEmptyText = result.filtered_out_by_reason.empty_text;
-        apifyFilterNoAiContext = result.filtered_out_by_reason.no_ai_context;
-        apifyFilterAmbiguousWithoutContext =
-          result.filtered_out_by_reason.ambiguous_without_context;
         apifyFilterDuplicate = result.filtered_out_by_reason.duplicate;
-        apifySampleSavedPosts = result.sample_saved_posts;
+        apifySampleIncluded = result.sample_included;
+        apifySampleFilteredOut = result.sample_filtered_out;
         await refreshRawPostsCount();
         return;
       }
@@ -1171,8 +1196,8 @@
       <p class="eyebrow">Local-first desktop intelligence</p>
       <h1>AI Agent Trend Radar</h1>
       <p>
-        Guided workflow for discovering AI Agent signals, reviewing candidates, ranking weekly
-        trends, and exporting local reports.
+        Named entity radar for discovering AI agents, skills, MCP servers, frameworks, and tools,
+        then reviewing candidates, ranking weekly trends, and exporting local reports.
       </p>
     </div>
 
@@ -1270,9 +1295,10 @@
     <section class="collector-panel" aria-label="AI Agent discovery crawler">
       <div>
         <p class="panel-label">1. Discovery</p>
-        <h2>Run broad topic discovery</h2>
+        <h2>Discover concrete named entities</h2>
         <p class="panel-note">
-          Search broad AI Agent conversations first, then save raw posts for the local pipeline.
+          Collect posts only when a concrete AI agent, skill, MCP server, framework, or tool name
+          can be detected.
         </p>
       </div>
 
@@ -1323,6 +1349,10 @@
             Apify fallback is experimental and should be reviewed for compliance before production
             use.
           </p>
+          <p class="panel-note">
+            Generic AI Agent discussion is filtered out. Posts are kept only when a named entity
+            can be extracted.
+          </p>
           <label for="apify-seeds">Apify seeds</label>
           <textarea
             id="apify-seeds"
@@ -1356,11 +1386,15 @@
         {#if discoverySource === 'apify_threads_scraper' || discoveryMode === 'apify_threads_scraper'}
           <span>Apify actor: {apifyActorId}</span>
           <span>Apify actor run ID: {apifyActorRunId}</span>
-          <span>Apify relevant items: {apifyDetectedRelevanceCount}</span>
+          <span>Entity gate included: {apifyEntityGateIncludedTotal}</span>
+          <span>Entity gate filtered: {apifyEntityGateFilteredTotal}</span>
           <span>Apify filtered out: {apifyFilteredOutTotal}</span>
+          <span>Filter no named entity: {apifyFilterNoNamedEntity}</span>
+          <span>Filter generic MCP only: {apifyFilterGenericMcpOnly}</span>
+          <span>Filter generic AI Agent only: {apifyFilterGenericAiAgentOnly}</span>
+          <span>Filter generic threadbait: {apifyFilterGenericThreadbait}</span>
+          <span>Filter ambiguous without entity: {apifyFilterAmbiguousWithoutEntity}</span>
           <span>Filter empty text: {apifyFilterEmptyText}</span>
-          <span>Filter no AI context: {apifyFilterNoAiContext}</span>
-          <span>Filter ambiguous without context: {apifyFilterAmbiguousWithoutContext}</span>
           <span>Filter duplicate: {apifyFilterDuplicate}</span>
         {/if}
         {#if discoveryPermissionLimitedHint}
@@ -1374,18 +1408,32 @@
         {/if}
       </div>
 
-      {#if apifySampleSavedPosts.length > 0}
-        <div class="mention-preview" aria-label="Apify saved post preview">
-          {#each apifySampleSavedPosts as post}
+      {#if apifySampleIncluded.length > 0}
+        <div class="mention-preview" aria-label="Apify included post preview">
+          {#each apifySampleIncluded as post}
             <article class="mention-row">
               <div>
                 <strong>{post.source_seed_keyword || 'Apify seed'}</strong>
                 <span>{post.post_id}</span>
+                <span>Entities: {post.detected_entities.join(', ')}</span>
                 {#if post.permalink}
                   <span>{post.permalink}</span>
                 {/if}
               </div>
               <p>{post.text_snippet}</p>
+            </article>
+          {/each}
+        </div>
+      {/if}
+
+      {#if apifySampleFilteredOut.length > 0}
+        <div class="mention-preview" aria-label="Apify filtered post preview">
+          {#each apifySampleFilteredOut as post}
+            <article class="mention-row">
+              <div>
+                <strong>Filtered: {post.reason}</strong>
+              </div>
+              <p>{post.text_snippet || 'No text available'}</p>
             </article>
           {/each}
         </div>
@@ -1586,7 +1634,8 @@
           <p class="panel-label">3. Candidate Review</p>
           <h2>Review Unknown Candidates</h2>
           <p class="panel-note">
-            Approve, ignore, or normalize newly discovered candidate names before they affect trends.
+            Review newly discovered names that may be AI agents, skills, MCP servers, frameworks, or
+            tools.
           </p>
         </div>
         <button type="button" on:click={loadCandidateEntities} disabled={isLoadingCandidates || isFullFlowRunning()}>

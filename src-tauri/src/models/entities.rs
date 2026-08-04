@@ -18,6 +18,13 @@ pub struct AgentAliasConfig {
     pub context_terms: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedEntityGateMatch {
+    pub entity_name: String,
+    pub category: String,
+    pub detection_source: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RawPostForDetection {
     pub post_id: String,

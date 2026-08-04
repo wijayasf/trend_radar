@@ -565,11 +565,10 @@ WITH base AS (
         AND COALESCE(
             m.review_status,
             CASE WHEN COALESCE(m.needs_review, FALSE) THEN 'pending' ELSE 'approved' END
-        ) != 'ignored'
-        AND (
-            COALESCE(m.category, 'unknown') != 'unknown_candidate'
-            OR COALESCE(m.review_status, 'pending') = 'approved'
-        )
+        ) = 'approved'
+        AND COALESCE(m.detection_source, 'known_alias') IN ('known_alias', 'reviewed_candidate')
+        AND COALESCE(m.category, 'unknown') != 'unknown_candidate'
+        AND lower(trim(m.agent_name)) NOT IN ('ai agent', 'html', 'llm', 'llms', 'mcp')
 ),
 grouped AS (
     SELECT

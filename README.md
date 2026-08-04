@@ -1,17 +1,17 @@
 # AI Agent Trend Radar
 
-AI Agent Trend Radar is a local-first desktop intelligence app for tracking AI Agent trend signals and preparing weekly Indonesia/global reports.
+AI Agent Trend Radar is a local-first named entity radar for discovering AI agents, skills, MCP servers, frameworks, and tools, then preparing weekly Indonesia/global reports.
 
 ## Overview
 
-AI Agent Trend Radar helps collect, organize, and analyze public trend signals related to AI agents, AI coding tools, agent skills, MCP, registries, and related developer workflows.
+AI Agent Trend Radar collects, organizes, and analyzes public posts only when the pipeline can extract a concrete named AI agent, coding tool, agent skill, MCP server, framework, registry, or related tool.
 
 The application is designed as a local-first desktop app, using DuckDB for local analytics storage and Tauri for the desktop runtime.
 
 ## Key Objectives
 
-- Track AI Agent discussion signals.
-- Detect AI Agent, tool, skill, MCP, and registry mentions.
+- Track named AI Agent, tool, skill, MCP server, framework, and registry signals.
+- Filter generic AI Agent discussion that contains no concrete entity name.
 - Classify detected entities by category.
 - Separate trend signals by Indonesia, global, or unknown region.
 - Prepare weekly trend reports for research and internal decision support.
@@ -30,8 +30,8 @@ The application is designed as a local-first desktop app, using DuckDB for local
 
 - Local DuckDB storage.
 - Threads API integration.
-- AI Agent discovery crawler using broad seed keywords from `config/discovery_keywords.yml`.
-- Experimental Apify Threads scraper fallback with AI Agent relevance filtering.
+- Named entity discovery crawler using seed keywords from `config/discovery_keywords.yml`.
+- Experimental Apify Threads scraper fallback with an entity-first inclusion gate.
 - Crawl diagnostics with run summary, seed-level status, bounded pagination, and single-seed testing.
 - Safe environment-based configuration.
 - Sample data import for local testing.
@@ -71,7 +71,6 @@ Examples of supported entities include:
 - Ponytail
 - Astryx
 - ExplainX
-- MCP
 - LangGraph
 - CrewAI
 - Replit Agent
@@ -137,8 +136,9 @@ Run AI Agent Discovery Crawl
 ```
 
 The manual Threads keyword collector remains available for debugging a single keyword.
-Discovery crawl is the primary research flow because it searches broad AI Agent topics first,
-then entity detection extracts specific tools, agents, skills, MCP terms, and candidate names.
+Discovery crawl is the primary research flow. Search seeds may be broad, but a post is useful to the
+radar only when entity detection extracts a concrete tool, agent, skill, named MCP server, framework,
+or meaningful candidate name.
 When Threads keyword search returns IDs only, the backend attempts a safe post detail fetch before
 entity detection runs.
 
@@ -156,7 +156,7 @@ Use `Clear Local Demo Data` to reset raw posts, mentions, crawl runs, and weekly
 
 The official Threads API remains the preferred connector. An experimental fallback connector is available for Apify actor `futurizerush/meta-threads-scraper` when review/demo work needs an alternate source.
 
-The fallback stores the Apify token in backend environment variables only, labels raw rows with `source_type = apify_threads_scraper`, and applies a relevance filter before saving posts. Ambiguous keywords such as `Ponytail`, `Caveman`, and `Cavemen` require AI Agent or developer context such as Claude Code, MCP, coding workflow, LLM, plugin, SDK, CLI, server, framework, model, or tool terms before they enter the local pipeline.
+The fallback stores the Apify token in backend environment variables only and labels raw rows with `source_type = apify_threads_scraper`. Before saving, it applies an entity-first gate using the same known aliases and strict unknown-candidate rules as entity detection. Generic AI Agent or MCP discussion is discarded when no concrete name can be extracted. `MCP` alone is context, not a rankable entity. Unknown names such as `Graphify` or `Headroom` enter Candidate Review as pending and do not affect weekly rankings until approved.
 
 Do not use the Apify fallback in production without legal and compliance review.
 
