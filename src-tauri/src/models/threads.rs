@@ -138,6 +138,7 @@ pub struct ApifyDiscoveryResult {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ApifyFilterReasons {
     pub no_named_entity: usize,
+    pub recruitment_or_job_post: usize,
     pub generic_mcp_only: usize,
     pub generic_ai_agent_only: usize,
     pub generic_threadbait: usize,

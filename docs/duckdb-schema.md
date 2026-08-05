@@ -133,6 +133,8 @@ Weekly aggregation includes only `known_alias` mentions and approved `reviewed_c
 
 Rows are grouped by `week_start`, `region`, canonical entity key, and `category`. The canonical key is based on `lower(trim(agent_name))`, so casing or source-record variants such as `Claude Code` and `claude code` collapse into one row per region/week/category.
 
+The MVP dashboard and report export loaders select only the maximum available `week_start`. Historical rows remain stored, while Top Indonesia/Global/Unknown shows one canonical row per region for the latest week.
+
 MVP trend score formula:
 
 ```text
@@ -153,6 +155,6 @@ The score formula should move to `config/scoring.yml` when the ranking design st
 - Phantom compatibility metadata that DuckDB does not expose as a real object is never repaired by deleting the database automatically. Local demo reset returns a friendly local-only cleanup instruction instead.
 - A fuller migration system should be introduced only when schema changes become frequent or data migration becomes risky.
 - The Apify connector is an experimental fallback. Its extra source metadata is additive and should be reviewed for compliance before production use.
-- Apify applies an entity-first gate before raw storage. Generic AI/MCP context is not sufficient; a known concrete alias or strict product-like unknown candidate must be detected.
+- Apify applies an entity-first gate before raw storage. Generic AI/MCP context is not sufficient; a known concrete alias or strict product-like unknown candidate must be detected. Recruitment/job posts are filtered unless a concrete named entity is present.
 - Apify enforces the actor's minimum of 10 max posts. Its synchronous run timeout defaults to 300 seconds and is configurable with `APIFY_RUN_TIMEOUT_SECONDS` within a 30-900 second bound.
 - Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.

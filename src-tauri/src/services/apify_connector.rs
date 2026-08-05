@@ -46,6 +46,24 @@ const THREADBAIT_TERMS: &[&str] = &[
     "here's what they do",
     "heres what they do",
 ];
+const RECRUITMENT_TERMS: &[&str] = &[
+    "looking for",
+    "hiring",
+    "appointment setter",
+    "setter closer",
+    "closer",
+    "commission",
+    "commission based",
+    "full time",
+    "ote",
+    "salary",
+    "job",
+    "role",
+    "position",
+    "apply",
+    "candidate",
+    "recruiting",
+];
 
 pub fn run_apify_discovery_crawl(
     seeds: Option<Vec<String>>,
@@ -241,6 +259,10 @@ fn entity_gate_decision(
         return EntityGateDecision::Include(detected_entities);
     }
 
+    if is_recruitment_or_job_post(text) {
+        return EntityGateDecision::Exclude(FilterReason::RecruitmentOrJobPost);
+    }
+
     if THREADBAIT_TERMS
         .iter()
         .any(|term| normalized.contains(term))
@@ -275,6 +297,7 @@ fn entity_gate_decision(
 fn record_filter_reason(reasons: &mut ApifyFilterReasons, reason: FilterReason) {
     match reason {
         FilterReason::NoNamedEntity => reasons.no_named_entity += 1,
+        FilterReason::RecruitmentOrJobPost => reasons.recruitment_or_job_post += 1,
         FilterReason::GenericMcpOnly => reasons.generic_mcp_only += 1,
         FilterReason::GenericAiAgentOnly => reasons.generic_ai_agent_only += 1,
         FilterReason::GenericThreadbait => reasons.generic_threadbait += 1,
@@ -305,6 +328,34 @@ fn contains_context_term(text: &str, term: &str) -> bool {
     }
 
     text.contains(term)
+}
+
+fn is_recruitment_or_job_post(text: &str) -> bool {
+    let normalized = normalize_gate_text(text);
+    let searchable_text = format!(" {normalized} ");
+    RECRUITMENT_TERMS.iter().any(|term| {
+        let searchable_term = format!(" {term} ");
+        searchable_text.contains(&searchable_term)
+    })
+}
+
+fn normalize_gate_text(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut previous_was_space = true;
+
+    for character in text.chars() {
+        if character.is_alphanumeric() {
+            for lowercase in character.to_lowercase() {
+                normalized.push(lowercase);
+            }
+            previous_was_space = false;
+        } else if !previous_was_space {
+            normalized.push(' ');
+            previous_was_space = true;
+        }
+    }
+
+    normalized.trim().to_string()
 }
 
 fn parse_apify_items(body_json: &Value) -> Result<Vec<Value>, String> {
@@ -470,6 +521,7 @@ enum EntityGateDecision {
 #[derive(Clone, Copy)]
 enum FilterReason {
     NoNamedEntity,
+    RecruitmentOrJobPost,
     GenericMcpOnly,
     GenericAiAgentOnly,
     GenericThreadbait,
@@ -482,6 +534,7 @@ impl FilterReason {
     fn as_str(self) -> &'static str {
         match self {
             Self::NoNamedEntity => "no_named_entity",
+            Self::RecruitmentOrJobPost => "recruitment_or_job_post",
             Self::GenericMcpOnly => "generic_mcp_only",
             Self::GenericAiAgentOnly => "generic_ai_agent_only",
             Self::GenericThreadbait => "generic_threadbait",
@@ -540,6 +593,12 @@ mod tests {
                 "text_content": "Who wants to learn Agentic AI?",
                 "search_keyword": "Agentic AI",
                 "post_url": "https://threads.net/t/generic-agentic-ai"
+            }),
+            serde_json::json!({
+                "post_code": "generic-recruitment",
+                "text_content": "Looking for an Appointment Setter/Closer. Full-time role with commission based OTE.",
+                "search_keyword": "AI Agent",
+                "post_url": "https://threads.net/t/generic-recruitment"
             }),
             serde_json::json!({
                 "post_code": "named-graphify",
@@ -603,7 +662,8 @@ mod tests {
 
         assert_eq!(normalized.posts.len(), 5);
         assert_eq!(normalized.entity_gate_included_total, 6);
-        assert_eq!(normalized.entity_gate_filtered_total, 7);
+        assert_eq!(normalized.entity_gate_filtered_total, 8);
+        assert_eq!(normalized.filter_reasons.recruitment_or_job_post, 1);
         assert_eq!(normalized.filter_reasons.generic_threadbait, 1);
         assert_eq!(normalized.filter_reasons.generic_mcp_only, 2);
         assert_eq!(normalized.filter_reasons.generic_ai_agent_only, 1);
@@ -638,5 +698,20 @@ mod tests {
                     .detected_entities
                     .contains(&"Claude Code".to_string())
         }));
+
+        assert!(matches!(
+            entity_gate_decision(
+                "We are hiring a developer for a Claude Code automation role.",
+                &entity_gate
+            ),
+            EntityGateDecision::Include(_)
+        ));
+        assert!(matches!(
+            entity_gate_decision(
+                "Looking for Appointment Setter/Closer for my AI automation offer. Commission based, full-time OTE $6-$10k a month.",
+                &entity_gate
+            ),
+            EntityGateDecision::Exclude(FilterReason::RecruitmentOrJobPost)
+        ));
     }
 }

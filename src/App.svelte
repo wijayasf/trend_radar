@@ -87,6 +87,7 @@
   let apifyEntityGateIncludedTotal = 0;
   let apifyEntityGateFilteredTotal = 0;
   let apifyFilterNoNamedEntity = 0;
+  let apifyFilterRecruitmentOrJobPost = 0;
   let apifyFilterGenericMcpOnly = 0;
   let apifyFilterGenericAiAgentOnly = 0;
   let apifyFilterGenericThreadbait = 0;
@@ -276,6 +277,7 @@
 
   type ApifyFilterReasons = {
     no_named_entity: number;
+    recruitment_or_job_post: number;
     generic_mcp_only: number;
     generic_ai_agent_only: number;
     generic_threadbait: number;
@@ -719,6 +721,7 @@
     apifyEntityGateIncludedTotal = 0;
     apifyEntityGateFilteredTotal = 0;
     apifyFilterNoNamedEntity = 0;
+    apifyFilterRecruitmentOrJobPost = 0;
     apifyFilterGenericMcpOnly = 0;
     apifyFilterGenericAiAgentOnly = 0;
     apifyFilterGenericThreadbait = 0;
@@ -867,6 +870,8 @@
         apifyEntityGateIncludedTotal = result.entity_gate_included_total;
         apifyEntityGateFilteredTotal = result.entity_gate_filtered_total;
         apifyFilterNoNamedEntity = result.filtered_out_by_reason.no_named_entity;
+        apifyFilterRecruitmentOrJobPost =
+          result.filtered_out_by_reason.recruitment_or_job_post;
         apifyFilterGenericMcpOnly = result.filtered_out_by_reason.generic_mcp_only;
         apifyFilterGenericAiAgentOnly = result.filtered_out_by_reason.generic_ai_agent_only;
         apifyFilterGenericThreadbait = result.filtered_out_by_reason.generic_threadbait;
@@ -1407,6 +1412,7 @@
           <span>Entity gate filtered: {apifyEntityGateFilteredTotal}</span>
           <span>Apify filtered out: {apifyFilteredOutTotal}</span>
           <span>Filter no named entity: {apifyFilterNoNamedEntity}</span>
+          <span>Filter recruitment/job post: {apifyFilterRecruitmentOrJobPost}</span>
           <span>Filter generic MCP only: {apifyFilterGenericMcpOnly}</span>
           <span>Filter generic AI Agent only: {apifyFilterGenericAiAgentOnly}</span>
           <span>Filter generic threadbait: {apifyFilterGenericThreadbait}</span>
@@ -1426,7 +1432,7 @@
       </div>
 
       {#if apifySampleIncluded.length > 0}
-        <div class="mention-preview" aria-label="Apify included post preview">
+        <div class="mention-preview apify-preview" aria-label="Apify included post preview">
           {#each apifySampleIncluded as post}
             <article class="mention-row">
               <div>
@@ -1444,7 +1450,7 @@
       {/if}
 
       {#if apifySampleFilteredOut.length > 0}
-        <div class="mention-preview" aria-label="Apify filtered post preview">
+        <div class="mention-preview apify-preview" aria-label="Apify filtered post preview">
           {#each apifySampleFilteredOut as post}
             <article class="mention-row">
               <div>

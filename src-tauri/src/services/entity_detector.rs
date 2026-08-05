@@ -295,6 +295,8 @@ fn detect_candidate_mentions(
                 matched_known_aliases,
                 known_aliases,
             )
+            || (!matched_known_aliases.is_empty()
+                && !is_strong_unknown_candidate(&candidate, &normalized_candidate))
             || seen_agents.iter().any(|agent| {
                 let normalized_agent = normalize_text(agent);
                 normalized_agent == normalized_candidate
@@ -569,16 +571,21 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "ai coding",
         "api",
         "apis",
+        "appointment setter",
+        "appointment setter closer",
         "breaking claude",
         "cli",
+        "closer",
         "code",
         "copilot",
-        "github",
         "developer",
         "entire",
+        "genai",
         "genx ers",
+        "github",
         "html",
         "indonesia",
+        "instagram",
         "large action models",
         "large language models",
         "lam",
@@ -591,9 +598,13 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "plugin",
         "same breath",
         "sdk",
+        "setter",
+        "setter closer",
         "skill",
         "testing",
+        "tiktok",
         "threads",
+        "threads tiktok instagram",
         "tools",
         "tools ai",
         "trend radar",
@@ -627,6 +638,17 @@ fn is_meaningful_unknown_candidate(
     }
 
     looks_like_product_or_tool_phrase(candidate, normalized_candidate)
+}
+
+fn is_strong_unknown_candidate(candidate: &str, normalized_candidate: &str) -> bool {
+    if is_candidate_stop_phrase(normalized_candidate) {
+        return false;
+    }
+
+    unknown_candidate_allowlist().contains(&normalized_candidate)
+        || candidate.split_whitespace().any(|token| {
+            is_domain_like(token) || is_camel_case_token(token) || has_product_name_affix(token)
+        })
 }
 
 fn looks_like_product_or_tool_phrase(candidate: &str, normalized_candidate: &str) -> bool {
@@ -685,12 +707,80 @@ fn has_product_name_affix(token: &str) -> bool {
 
 fn candidate_stopwords() -> &'static [&'static str] {
     &[
-        "a", "an", "actually", "agentic", "and", "any", "api", "apis", "breaking", "but", "can",
-        "claude", "cli", "code", "codex", "copilot", "did", "don t", "dont", "entire", "even",
-        "everyone", "for", "genx ers", "github", "good", "he", "here", "here s", "heres", "how",
-        "html", "i", "if", "i m", "im", "it", "it s", "its", "lam", "lams", "large", "llm", "llms",
-        "mcp", "me", "models", "my", "one", "plugin", "same", "save", "sdk", "she", "skill",
-        "that", "the", "they", "this", "to", "we", "what", "when", "who", "why", "with", "you",
+        "a",
+        "an",
+        "actually",
+        "agentic",
+        "and",
+        "any",
+        "api",
+        "apis",
+        "appointment",
+        "breaking",
+        "but",
+        "can",
+        "claude",
+        "cli",
+        "closer",
+        "code",
+        "codex",
+        "copilot",
+        "did",
+        "don t",
+        "dont",
+        "entire",
+        "even",
+        "everyone",
+        "for",
+        "genai",
+        "genx ers",
+        "github",
+        "good",
+        "he",
+        "here",
+        "here s",
+        "heres",
+        "how",
+        "html",
+        "i",
+        "if",
+        "i m",
+        "im",
+        "instagram",
+        "it",
+        "it s",
+        "its",
+        "lam",
+        "lams",
+        "large",
+        "llm",
+        "llms",
+        "mcp",
+        "me",
+        "models",
+        "my",
+        "one",
+        "plugin",
+        "same",
+        "save",
+        "sdk",
+        "setter",
+        "she",
+        "skill",
+        "that",
+        "the",
+        "they",
+        "this",
+        "threads",
+        "tiktok",
+        "to",
+        "we",
+        "what",
+        "when",
+        "who",
+        "why",
+        "with",
+        "you",
         "your",
     ]
 }
@@ -1125,6 +1215,58 @@ mod tests {
                     || !rejected_fragments.contains(&mention.agent_name.as_str())
             }));
         }
+    }
+
+    #[test]
+    fn excludes_platform_and_recruitment_terms_from_unknown_candidates() {
+        for candidate in [
+            "GenAI",
+            "TikTok",
+            "Threads",
+            "Instagram",
+            "Threads TikTok Instagram",
+            "Setter/Closer",
+            "Appointment Setter",
+            "Closer",
+            "Appointment Setter/Closer",
+        ] {
+            let text = format!("{candidate} appears near an AI agent workflow discussion.");
+            let mentions =
+                detect_mentions_in_text("post-noise", &text, &test_config(), &HashMap::new());
+
+            assert!(
+                mentions
+                    .iter()
+                    .all(|mention| mention.category != "unknown_candidate"),
+                "{candidate} must not enter candidate review"
+            );
+        }
+    }
+
+    #[test]
+    fn known_alias_suppresses_weak_candidates_but_keeps_strong_candidates() {
+        let weak_mentions = detect_mentions_in_text(
+            "post-known-with-noise",
+            "Claude Code is more Agentic than generative and there is not a single app from any major or minor company that isn't using some form of agentic AI in 2026. She mentions TikTok and Instagram.",
+            &test_config(),
+            &HashMap::new(),
+        );
+        assert!(weak_mentions
+            .iter()
+            .any(|mention| mention.agent_name == "Claude Code"));
+        assert!(weak_mentions
+            .iter()
+            .all(|mention| mention.category != "unknown_candidate"));
+
+        let strong_mentions = detect_mentions_in_text(
+            "post-known-with-strong-candidate",
+            "Claude Code works with Graphify for agent memory.",
+            &test_config(),
+            &HashMap::new(),
+        );
+        assert!(strong_mentions.iter().any(|mention| {
+            mention.agent_name == "Graphify" && mention.category == "unknown_candidate"
+        }));
     }
 
     #[test]

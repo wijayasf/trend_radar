@@ -1468,6 +1468,7 @@ pub fn load_weekly_agent_metrics_by_region(
                 trend_score
             FROM weekly_agent_metrics
             WHERE region = ?1
+              AND week_start = (SELECT MAX(week_start) FROM weekly_agent_metrics)
             ORDER BY trend_score DESC, mentions DESC, agent_name ASC
             LIMIT ?2
             "#,
@@ -1537,6 +1538,7 @@ pub fn load_weekly_agent_metrics(limit: usize) -> Result<Vec<WeeklyAgentMetric>,
                 cost_negative_boros_pct,
                 trend_score
             FROM weekly_agent_metrics
+            WHERE week_start = (SELECT MAX(week_start) FROM weekly_agent_metrics)
             ORDER BY region ASC, trend_score DESC, mentions DESC, agent_name ASC
             LIMIT ?1
             "#,

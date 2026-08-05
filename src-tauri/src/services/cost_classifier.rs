@@ -195,6 +195,12 @@ const COST_POSITIVE_INDICATORS: &[&str] = &[
     "worth the price",
     "sepadan",
     "worth the money",
+    "free usage credits",
+    "usage credits",
+    "free credits",
+    "account credits",
+    "free usage",
+    "100 in free",
 ];
 
 const COST_NEUTRAL_MENTION_INDICATORS: &[&str] = &[
@@ -241,6 +247,15 @@ mod tests {
     #[test]
     fn classifies_worth_it_as_cost_positive() {
         let result = classify_text("Copilot worth it.");
+
+        assert_eq!(result.cost_signal, "cost_positive");
+    }
+
+    #[test]
+    fn classifies_free_usage_credits_as_cost_positive() {
+        let result = classify_text(
+            "Opened Claude Code today and found $100 in free usage credits sitting in my account.",
+        );
 
         assert_eq!(result.cost_signal, "cost_positive");
     }

@@ -156,7 +156,9 @@ Use `Clear Local Demo Data` to reset raw posts, mentions, crawl runs, and weekly
 
 The official Threads API remains the preferred connector. An experimental fallback connector is available for Apify actor `futurizerush/meta-threads-scraper` when review/demo work needs an alternate source.
 
-The fallback stores the Apify token in backend environment variables only and labels raw rows with `source_type = apify_threads_scraper`. Before saving, it applies an entity-first gate using the same known aliases and strict unknown-candidate rules as entity detection. Generic AI Agent or MCP discussion is discarded when no concrete name can be extracted. `MCP` alone is context, not a rankable entity. Unknown names such as `Graphify` or `Headroom` enter Candidate Review as pending and do not affect weekly rankings until approved.
+The fallback stores the Apify token in backend environment variables only and labels raw rows with `source_type = apify_threads_scraper`. Before saving, it applies an entity-first gate using the same known aliases and strict unknown-candidate rules as entity detection. Generic AI Agent or MCP discussion and recruitment/job posts without a concrete named tool are discarded. `MCP` alone is context, not a rankable entity. Unknown names such as `Graphify` or `Headroom` enter Candidate Review as pending and do not affect weekly rankings until approved.
+
+Dashboard rankings and report exports display the latest aggregated week by default. Historical weekly rows remain in DuckDB for audit and future comparisons.
 
 The actor requires at least 10 max posts. The backend adjusts smaller values to 10. Synchronous actor timeout defaults to 300 seconds and can be changed with `APIFY_RUN_TIMEOUT_SECONDS` (bounded to 30-900 seconds).
 

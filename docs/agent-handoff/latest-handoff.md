@@ -1,40 +1,37 @@
 # Latest Handoff
 
 Date: 2026-08-05
-Session: 038-candidate-fragment-suppression
+Session: 039-non-tool-noise-cleanup
 Agent: Codex
 
 ## Current State
 
-Known-alias fragments and generic Large Action Model terms no longer enter Candidate Review. The 42-post real-data replay now produces zero pending candidates while retaining the same nine canonical weekly entities.
+The named-entity pipeline now blocks the remaining live-crawl platform and recruitment noise. Weekly dashboard/export queries show only the latest week, and free usage credits are recognized as a positive cost signal.
 
 ## Key Changes
 
-- `Claude Code`, `Codex CLI`, and `GitHub Copilot` are detected only as full known entities; `Code`, `CLI`, `GitHub`, `Copilot`, `Claude`, and `Codex` are suppressed as unknown fragments.
-- Generic concepts including `LAMs`, `LLMs`, Large Action Models, standalone `MCP`, `API`, `SDK`, and `HTML` cannot become unknown candidates.
-- `Graphify` and `Headroom` remain valid pending candidates.
-- Apify enforces at least 10 max posts and uses a configurable 300-second default timeout with a friendly timeout message.
-- Schema initialization removes a real legacy compatibility table/view. Phantom DuckDB metadata returns a safe manual local-reset message; the database file is never deleted automatically.
+- Explicitly rejected `GenAI`, social platforms, appointment setter/closer roles, and related phrases as unknown candidates.
+- Added Apify filter reason `recruitment_or_job_post`; recruitment posts still pass when a concrete named tool such as `Claude Code` is present.
+- Made known aliases authoritative within a post while retaining strong product-shaped candidates such as `Graphify` and `Headroom`.
+- Limited ranking and export loaders to the maximum `week_start`, preventing historical `Claude Code` rows from appearing as duplicates.
+- Classified free usage/account credit phrases as `cost_positive`.
+- Made Apify included/filtered diagnostics wrap long metadata and snippets cleanly.
 
 ## Validation Snapshot
 
-- Baseline: 42 raw / 103 mentions / 70 pending.
-- Previous entity gate: 16 included / 22 mentions / 4 pending / 9 weekly rows.
-- Current replay: 15 included / 17 mentions / 0 pending / 9 weekly rows.
-- Entity, Apify, reset, compatibility cleanup, full-flow, raw insert, weekly grouping, frontend build, Rust format/check, and diff validations passed.
-- Existing Rust dead-code warnings remain unchanged.
-- Security scan found no token or secret values.
-- `src-tauri/data` remains empty.
+- Frontend production build, Rust format/check, full sample flow, and raw insert regression passed.
+- All 22 entity detector tests, 3 Apify tests, 8 cost tests, and 2 weekly tests passed.
+- Existing Rust placeholder/dead-code warnings remain unchanged.
+- Security scan found only literal pattern names in historical progress notes, with no secret values; ignored runtime files remain untracked and `src-tauri/data` is empty.
 
 ## Pending
 
-- Run one fresh live Apify crawl with the new 300-second timeout.
-- Review the live included/filtered samples and confirm actor latency is acceptable.
-- Push only when explicitly requested.
+- Run a fresh live Apify crawl to confirm the four observed candidates no longer appear in Candidate Review.
+- Push the four local quality commits only when explicitly requested.
 
 ## Risk Note
 
-Live Apify completion under the new timeout has not yet been revalidated. The root local DuckDB may still need manual removal for a clean demo if its old phantom metadata prevents reset.
+The new filters are deterministic and covered by real-snippet tests, but the latest live Apify dataset has not been fetched again after this patch. Recruitment posts that mention a concrete named tool are intentionally retained for product-signal review.
 
 ## Token Usage
 

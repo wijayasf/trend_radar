@@ -472,6 +472,22 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.apify-preview .mention-row {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.apify-preview .mention-row > div,
+.apify-preview .mention-row p {
+  min-width: 0;
+}
+
+.apify-preview .mention-row span {
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .mention-row .confidence {
   min-width: 48px;
   margin: 0;

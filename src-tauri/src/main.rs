@@ -147,6 +147,47 @@ mod tests {
     }
 
     #[test]
+    fn validates_weekly_rankings_only_load_the_latest_week() {
+        let database_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-latest-week-ranking-test.duckdb");
+        cleanup_database_files(&database_path);
+        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+
+        duckdb_service::initialize_database().expect("schema initialization should succeed");
+        let posts = [
+            ("weekly-old-1", "2026-07-06T09:00:00Z"),
+            ("weekly-latest-1", "2026-07-13T09:00:00Z"),
+            ("weekly-latest-2", "2026-07-13T10:00:00Z"),
+            ("weekly-latest-3", "2026-07-14T09:00:00Z"),
+            ("weekly-latest-4", "2026-07-15T09:00:00Z"),
+        ]
+        .map(|(post_id, posted_at)| test_raw_post(post_id, "Claude Code is useful.", posted_at));
+        duckdb_service::save_threads_raw_posts(&posts).expect("raw posts should save");
+
+        let mentions = posts
+            .iter()
+            .map(|post| test_mention(&post.post_id, "Claude Code", "coding_agent"))
+            .collect::<Vec<_>>();
+        duckdb_service::save_agent_mentions(&mentions).expect("mentions should save");
+
+        weekly_aggregator::aggregate_weekly_metrics()
+            .expect("weekly aggregation should build both weeks");
+        let global_metrics = duckdb_service::load_weekly_agent_metrics_by_region("global", 20)
+            .expect("latest global ranking should load");
+        let export_metrics = duckdb_service::load_weekly_agent_metrics(100)
+            .expect("latest export metrics should load");
+
+        assert_eq!(global_metrics.len(), 1);
+        assert_eq!(global_metrics[0].agent_name, "Claude Code");
+        assert_eq!(global_metrics[0].mentions, 4);
+        assert_eq!(global_metrics[0].week_start, "2026-07-13");
+        assert_eq!(export_metrics.len(), 1);
+        assert_eq!(export_metrics[0].week_start, "2026-07-13");
+
+        cleanup_database_files(&database_path);
+    }
+
+    #[test]
     fn validates_reset_local_pipeline_data_preserves_candidate_decisions() {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-reset-demo-data-test.duckdb");
