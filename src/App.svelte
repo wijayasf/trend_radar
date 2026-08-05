@@ -554,8 +554,17 @@
     if (raw.includes('code=10') || raw.includes('Application does not have permission')) {
       return 'Threads keyword search permission missing. Add threads_keyword_search in Meta Developer Permissions, regenerate the token, and try again.';
     }
-    if (raw.includes('agent_mentions_compatible') || raw.includes('Catalog Error')) {
+    if (
+      raw.includes('agent_mentions_compatible') ||
+      raw.toLowerCase().includes('legacy local duckdb metadata detected')
+    ) {
+      return 'Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.';
+    }
+    if (raw.includes('Catalog Error')) {
       return 'Local DuckDB schema needs attention. Restart the app so schema initialization can run, then try again.';
+    }
+    if (raw.toLowerCase().includes('apify actor is still running or timed out')) {
+      return 'Apify actor is still running or timed out. Try again with fewer seeds or wait longer.';
     }
     if (raw.toLowerCase().includes('text is unavailable') || raw.toLowerCase().includes('text_missing')) {
       return 'Post detail was fetched, but text is unavailable for one or more posts.';
@@ -836,9 +845,14 @@
           .split('\n')
           .map((seed) => seed.trim())
           .filter(Boolean);
+        const apifyMaxPosts = Math.max(10, Number(discoveryMaxPerSeed) || 10);
+        if (apifyMaxPosts !== discoveryMaxPerSeed) {
+          discoveryMaxPerSeed = apifyMaxPosts;
+          discoveryStatus = 'Apify actor requires at least 10 max posts. Using 10.';
+        }
         const result = await invoke<ApifyDiscoveryResult>('run_apify_discovery_crawl', {
           seeds,
-          maxPerSeed: discoveryMaxPerSeed,
+          maxPerSeed: apifyMaxPosts,
         });
         discoveryMode = result.mode;
         discoveryFetchedTotal = result.fetched_total;
@@ -1329,7 +1343,7 @@
           </select>
           <input
             type="number"
-            min="1"
+            min={discoverySource === 'apify_threads_scraper' ? 10 : 1}
             max="50"
             bind:value={discoveryMaxPerSeed}
             disabled={isRunningDiscovery || isFullFlowRunning()}
@@ -1352,6 +1366,9 @@
           <p class="panel-note">
             Generic AI Agent discussion is filtered out. Posts are kept only when a named entity
             can be extracted.
+          </p>
+          <p class="panel-note">
+            The Apify actor requires at least 10 max posts. Lower values are adjusted to 10.
           </p>
           <label for="apify-seeds">Apify seeds</label>
           <textarea

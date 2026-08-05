@@ -312,6 +312,9 @@ CREATE INDEX IF NOT EXISTS idx_weekly_agent_metrics_region_score
     ON weekly_agent_metrics(region, trend_score);
 "#;
 
+const LEGACY_COMPATIBILITY_OBJECT: &str = "agent_mentions_compatible";
+const LEGACY_LOCAL_DATABASE_MESSAGE: &str = "Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.";
+
 const THREADS_POST_INSERT_SQL: &str = r#"
 INSERT OR REPLACE INTO threads_posts_raw (
     post_id,
@@ -718,21 +721,21 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
 
     connection
         .execute("DELETE FROM agent_mentions", [])
-        .map_err(|error| format!("DuckDB agent mention reset failed: {error}"))?;
+        .map_err(|error| reset_error("agent mention", error))?;
     connection
         .execute("DELETE FROM weekly_agent_metrics", [])
-        .map_err(|error| format!("DuckDB weekly metrics reset failed: {error}"))?;
-    connection
-        .execute("DELETE FROM crawl_runs", [])
-        .map_err(|error| format!("DuckDB crawl run reset failed: {error}"))?;
+        .map_err(|error| reset_error("weekly metrics", error))?;
     if table_exists(&connection, "crawl_seed_results")? {
         connection
             .execute("DELETE FROM crawl_seed_results", [])
-            .map_err(|error| format!("DuckDB crawl seed result reset failed: {error}"))?;
+            .map_err(|error| reset_error("crawl seed result", error))?;
     }
     connection
+        .execute("DELETE FROM crawl_runs", [])
+        .map_err(|error| reset_error("crawl run", error))?;
+    connection
         .execute("DELETE FROM threads_posts_raw", [])
-        .map_err(|error| format!("DuckDB raw post reset failed: {error}"))?;
+        .map_err(|error| reset_error("raw post", error))?;
 
     Ok("Cleared local demo data: raw posts, mentions, crawl runs, and weekly metrics. Candidate decisions were preserved.".to_string())
 }
@@ -1591,7 +1594,48 @@ pub fn load_weekly_agent_metrics(limit: usize) -> Result<Vec<WeeklyAgentMetric>,
 fn initialize_database_at(database_path: &Path) -> Result<(), String> {
     ensure_parent_directory(database_path)?;
     let connection = open_connection(database_path)?;
+    remove_legacy_compatibility_object(&connection)?;
     run_schema_initialization(&connection)
+}
+
+fn remove_legacy_compatibility_object(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT table_type FROM information_schema.tables WHERE lower(table_name) = lower(?1) LIMIT 1",
+        )
+        .map_err(|error| format!("DuckDB legacy schema inspection failed: {error}"))?;
+    let mut rows = statement
+        .query(params![LEGACY_COMPATIBILITY_OBJECT])
+        .map_err(|error| format!("DuckDB legacy schema query failed: {error}"))?;
+    let object_type = rows
+        .next()
+        .map_err(|error| format!("DuckDB legacy schema row read failed: {error}"))?
+        .map(|row| row.get::<_, String>(0))
+        .transpose()
+        .map_err(|error| format!("DuckDB legacy schema type read failed: {error}"))?;
+    drop(rows);
+    drop(statement);
+
+    let Some(object_type) = object_type else {
+        return Ok(());
+    };
+    let drop_sql = if object_type.eq_ignore_ascii_case("VIEW") {
+        "DROP VIEW IF EXISTS agent_mentions_compatible"
+    } else {
+        "DROP TABLE IF EXISTS agent_mentions_compatible"
+    };
+
+    connection
+        .execute_batch(drop_sql)
+        .map_err(|_| LEGACY_LOCAL_DATABASE_MESSAGE.to_string())
+}
+
+fn reset_error(operation: &str, error: duckdb::Error) -> String {
+    if error.to_string().contains(LEGACY_COMPATIBILITY_OBJECT) {
+        LEGACY_LOCAL_DATABASE_MESSAGE.to_string()
+    } else {
+        format!("DuckDB {operation} reset failed: {error}")
+    }
 }
 
 fn i64_to_usize(value: i64) -> Result<usize, duckdb::Error> {

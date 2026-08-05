@@ -15,9 +15,14 @@ use crate::utils::config;
 
 const APIFY_TOKEN_ENV: &str = "APIFY_TOKEN";
 const APIFY_THREADS_ACTOR_ID_ENV: &str = "APIFY_THREADS_ACTOR_ID";
+const APIFY_RUN_TIMEOUT_SECONDS_ENV: &str = "APIFY_RUN_TIMEOUT_SECONDS";
 const DEFAULT_APIFY_THREADS_ACTOR_ID: &str = "futurizerush/meta-threads-scraper";
 const APIFY_SOURCE_TYPE: &str = "apify_threads_scraper";
 const DEFAULT_MAX_PER_SEED: usize = 10;
+const MIN_APIFY_MAX_POSTS: usize = 10;
+const DEFAULT_APIFY_RUN_TIMEOUT_SECONDS: u64 = 300;
+const MIN_APIFY_RUN_TIMEOUT_SECONDS: u64 = 30;
+const MAX_APIFY_RUN_TIMEOUT_SECONDS: u64 = 900;
 const SAMPLE_LIMIT: usize = 6;
 
 const DEFAULT_APIFY_SEEDS: &[&str] = &[
@@ -52,7 +57,7 @@ pub fn run_apify_discovery_crawl(
     }
 
     let actor_id = read_actor_id();
-    let max_posts = max_per_seed.unwrap_or(DEFAULT_MAX_PER_SEED).max(1);
+    let max_posts = normalize_max_posts(max_per_seed);
     let entity_gate = entity_detector::NamedEntityGateDetector::load()?;
     let (items, actor_run_id) = call_apify_actor(&actor_id, &seeds, max_posts)?;
     let fetched_total = items.len();
@@ -91,8 +96,9 @@ fn call_apify_actor(
         "search_filter": "recent",
         "max_posts": max_posts,
     });
+    let timeout_seconds = read_run_timeout_seconds();
     let client = Client::builder()
-        .timeout(Duration::from_secs(90))
+        .timeout(Duration::from_secs(timeout_seconds))
         .build()
         .map_err(|error| format!("Apify HTTP client initialization failed: {error}"))?;
 
@@ -101,7 +107,15 @@ fn call_apify_actor(
         .bearer_auth(token)
         .json(&input)
         .send()
-        .map_err(|_| "Apify actor request failed before receiving a response.".to_string())?;
+        .map_err(|error| {
+            if error.is_timeout() {
+                format!(
+                    "Apify actor is still running or timed out after {timeout_seconds} seconds. Try again with fewer seeds or wait longer."
+                )
+            } else {
+                "Apify actor request failed before receiving a response.".to_string()
+            }
+        })?;
 
     let status = response.status();
     let actor_run_id = response
@@ -378,6 +392,26 @@ fn normalize_seeds(seeds: Option<Vec<String>>) -> Vec<String> {
     normalized
 }
 
+fn normalize_max_posts(max_per_seed: Option<usize>) -> usize {
+    max_per_seed
+        .unwrap_or(DEFAULT_MAX_PER_SEED)
+        .max(MIN_APIFY_MAX_POSTS)
+}
+
+fn read_run_timeout_seconds() -> u64 {
+    config::load_env_files_once();
+
+    let configured = env::var(APIFY_RUN_TIMEOUT_SECONDS_ENV).ok();
+    normalize_run_timeout_seconds(configured.as_deref())
+}
+
+fn normalize_run_timeout_seconds(configured: Option<&str>) -> u64 {
+    configured
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_APIFY_RUN_TIMEOUT_SECONDS)
+        .clamp(MIN_APIFY_RUN_TIMEOUT_SECONDS, MAX_APIFY_RUN_TIMEOUT_SECONDS)
+}
+
 fn read_actor_id() -> String {
     config::load_env_files_once();
 
@@ -461,6 +495,24 @@ impl FilterReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enforces_apify_minimum_max_posts() {
+        assert_eq!(normalize_max_posts(None), 10);
+        assert_eq!(normalize_max_posts(Some(1)), 10);
+        assert_eq!(normalize_max_posts(Some(9)), 10);
+        assert_eq!(normalize_max_posts(Some(10)), 10);
+        assert_eq!(normalize_max_posts(Some(25)), 25);
+    }
+
+    #[test]
+    fn normalizes_apify_run_timeout_seconds() {
+        assert_eq!(normalize_run_timeout_seconds(None), 300);
+        assert_eq!(normalize_run_timeout_seconds(Some("invalid")), 300);
+        assert_eq!(normalize_run_timeout_seconds(Some("10")), 30);
+        assert_eq!(normalize_run_timeout_seconds(Some("450")), 450);
+        assert_eq!(normalize_run_timeout_seconds(Some("1200")), 900);
+    }
 
     #[test]
     fn requires_named_entities_for_apify_discovery() {

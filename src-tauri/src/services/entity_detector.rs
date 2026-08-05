@@ -132,6 +132,7 @@ fn detect_mentions_in_text(
     let mut seen_agents = HashSet::new();
     let mut mentions = Vec::new();
     let known_aliases = known_aliases(config);
+    let mut matched_known_aliases = Vec::new();
 
     for agent in &config.agents {
         if seen_agents.contains(&agent.canonical_name) {
@@ -140,6 +141,7 @@ fn detect_mentions_in_text(
 
         if let Some((matched_alias, confidence)) = detect_agent_alias(agent, &normalized_text) {
             seen_agents.insert(agent.canonical_name.clone());
+            matched_known_aliases.push(normalize_text(&matched_alias));
             mentions.push(DetectedAgentMention {
                 mention_id: stable_mention_id(post_id, &agent.canonical_name),
                 post_id: post_id.to_string(),
@@ -167,6 +169,7 @@ fn detect_mentions_in_text(
         text,
         &normalized_text,
         &known_aliases,
+        &matched_known_aliases,
         decisions,
         &mut seen_agents,
     ));
@@ -272,6 +275,7 @@ fn detect_candidate_mentions(
     text: &str,
     normalized_text: &str,
     known_aliases: &HashSet<String>,
+    matched_known_aliases: &[String],
     decisions: &HashMap<String, EntityReviewDecision>,
     seen_agents: &mut HashSet<String>,
 ) -> Vec<DetectedAgentMention> {
@@ -286,6 +290,11 @@ fn detect_candidate_mentions(
             || is_candidate_stop_phrase(&normalized_candidate)
             || !is_meaningful_unknown_candidate(&candidate, &normalized_candidate, normalized_text)
             || known_aliases.contains(&normalized_candidate)
+            || overlaps_known_alias_fragment(
+                &normalized_candidate,
+                matched_known_aliases,
+                known_aliases,
+            )
             || seen_agents.iter().any(|agent| {
                 let normalized_agent = normalize_text(agent);
                 normalized_agent == normalized_candidate
@@ -304,6 +313,28 @@ fn detect_candidate_mentions(
     }
 
     candidates
+}
+
+fn overlaps_known_alias_fragment(
+    normalized_candidate: &str,
+    matched_known_aliases: &[String],
+    known_aliases: &HashSet<String>,
+) -> bool {
+    let candidate_tokens = normalized_candidate.split_whitespace().collect::<Vec<_>>();
+    if candidate_tokens.is_empty() {
+        return false;
+    }
+
+    let overlaps = |alias: &str| {
+        let alias_tokens = alias.split_whitespace().collect::<Vec<_>>();
+        candidate_tokens.len() < alias_tokens.len()
+            && alias_tokens
+                .windows(candidate_tokens.len())
+                .any(|window| window == candidate_tokens)
+    };
+
+    matched_known_aliases.iter().any(|alias| overlaps(alias))
+        || (candidate_tokens.len() == 1 && known_aliases.iter().any(|alias| overlaps(alias)))
 }
 
 fn entity_review_decisions_by_id() -> Result<HashMap<String, EntityReviewDecision>, String> {
@@ -539,6 +570,10 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "api",
         "apis",
         "breaking claude",
+        "cli",
+        "code",
+        "copilot",
+        "github",
         "developer",
         "entire",
         "genx ers",
@@ -546,6 +581,8 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "indonesia",
         "large action models",
         "large language models",
+        "lam",
+        "lams",
         "llm",
         "llms",
         "mcp",
@@ -553,6 +590,7 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "model context protocol",
         "plugin",
         "same breath",
+        "sdk",
         "skill",
         "testing",
         "threads",
@@ -648,11 +686,12 @@ fn has_product_name_affix(token: &str) -> bool {
 fn candidate_stopwords() -> &'static [&'static str] {
     &[
         "a", "an", "actually", "agentic", "and", "any", "api", "apis", "breaking", "but", "can",
-        "claude", "did", "don t", "dont", "entire", "even", "everyone", "for", "genx ers", "good",
-        "he", "here", "here s", "heres", "how", "html", "i", "if", "i m", "im", "it", "it s",
-        "its", "large", "llm", "llms", "mcp", "me", "models", "my", "one", "plugin", "same",
-        "save", "she", "skill", "that", "the", "they", "this", "to", "we", "what", "when", "who",
-        "why", "with", "you", "your",
+        "claude", "cli", "code", "codex", "copilot", "did", "don t", "dont", "entire", "even",
+        "everyone", "for", "genx ers", "github", "good", "he", "here", "here s", "heres", "how",
+        "html", "i", "if", "i m", "im", "it", "it s", "its", "lam", "lams", "large", "llm", "llms",
+        "mcp", "me", "models", "my", "one", "plugin", "same", "save", "sdk", "she", "skill",
+        "that", "the", "they", "this", "to", "we", "what", "when", "who", "why", "with", "you",
+        "your",
     ]
 }
 
@@ -793,6 +832,20 @@ mod tests {
                     context_terms: Vec::new(),
                 },
                 AgentAliasConfig {
+                    canonical_name: "Codex CLI".to_string(),
+                    category: "coding_agent".to_string(),
+                    aliases: vec!["Codex CLI".to_string(), "OpenAI Codex CLI".to_string()],
+                    ambiguous: false,
+                    context_terms: Vec::new(),
+                },
+                AgentAliasConfig {
+                    canonical_name: "GitHub Copilot".to_string(),
+                    category: "coding_assistant".to_string(),
+                    aliases: vec!["GitHub Copilot".to_string(), "Copilot".to_string()],
+                    ambiguous: false,
+                    context_terms: Vec::new(),
+                },
+                AgentAliasConfig {
                     canonical_name: "MCP".to_string(),
                     category: "mcp_or_connector".to_string(),
                     aliases: vec![
@@ -878,9 +931,12 @@ mod tests {
             &HashMap::new(),
         );
 
-        assert_eq!(mentions[0].agent_name, "Ponytail");
-        assert_eq!(mentions[0].category, "skill_or_mode");
-        assert!(!mentions[0].needs_review);
+        let ponytail = mentions
+            .iter()
+            .find(|mention| mention.agent_name == "Ponytail")
+            .expect("Ponytail should be detected from its domain alias");
+        assert_eq!(ponytail.category, "skill_or_mode");
+        assert!(!ponytail.needs_review);
     }
 
     #[test]
@@ -1041,6 +1097,52 @@ mod tests {
     }
 
     #[test]
+    fn suppresses_unknown_fragments_inside_known_aliases() {
+        for (text, expected_entity, rejected_fragments) in [
+            (
+                "Claude Code feels completely different after this. Anthropic quietly released an official plugin that scans your project and recommends Skills, MCP servers, Subagents, and Hooks.",
+                "Claude Code",
+                vec!["Claude", "Code", "Anthropic"],
+            ),
+            (
+                "Codex CLI is useful for agentic coding workflows.",
+                "Codex CLI",
+                vec!["Codex", "CLI"],
+            ),
+            (
+                "GitHub Copilot agent mode helped automate code review.",
+                "GitHub Copilot",
+                vec!["GitHub", "Copilot"],
+            ),
+        ] {
+            let mentions =
+                detect_mentions_in_text("post-fragment", text, &test_config(), &HashMap::new());
+            assert!(mentions.iter().any(|mention| {
+                mention.agent_name == expected_entity && mention.detection_source == "known_alias"
+            }));
+            assert!(mentions.iter().all(|mention| {
+                mention.category != "unknown_candidate"
+                    || !rejected_fragments.contains(&mention.agent_name.as_str())
+            }));
+        }
+    }
+
+    #[test]
+    fn excludes_large_model_concepts_from_candidates_and_entity_gate() {
+        let text = "Agentic AI is powered by both Large Language Models LLMs and Large Action Models LAMs.";
+        let mentions =
+            detect_mentions_in_text("post-model-concepts", text, &test_config(), &HashMap::new());
+        let detector = NamedEntityGateDetector {
+            config: test_config(),
+        };
+
+        assert!(!mentions
+            .iter()
+            .any(|mention| mention.category == "unknown_candidate"));
+        assert!(detector.detect(text).is_empty());
+    }
+
+    #[test]
     fn detects_explainx_registry() {
         let mentions = detect_mentions_in_text(
             "post-1",
@@ -1075,8 +1177,11 @@ mod tests {
             &HashMap::new(),
         );
 
-        assert_eq!(mentions[0].agent_name, "MCP");
-        assert_eq!(mentions[0].category, "mcp_or_connector");
+        let mcp = mentions
+            .iter()
+            .find(|mention| mention.agent_name == "MCP")
+            .expect("MCP should be detected with connector context");
+        assert_eq!(mcp.category, "mcp_or_connector");
     }
 
     #[test]

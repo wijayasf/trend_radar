@@ -203,6 +203,48 @@ mod tests {
     }
 
     #[test]
+    fn validates_legacy_mention_compatibility_objects_are_removed() {
+        let database_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-legacy-compat-cleanup-test.duckdb");
+        cleanup_database_files(&database_path);
+        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+
+        let connection = Connection::open(&database_path)
+            .expect("legacy compatibility test database should open");
+        connection
+            .execute_batch("CREATE TABLE agent_mentions_compatible (id TEXT);")
+            .expect("legacy compatibility table should be created");
+        drop(connection);
+
+        duckdb_service::initialize_database()
+            .expect("schema initialization should remove the legacy table");
+        assert!(!database_object_exists(
+            &database_path,
+            "agent_mentions_compatible"
+        ));
+
+        let connection = Connection::open(&database_path)
+            .expect("legacy compatibility test database should reopen");
+        connection
+            .execute_batch(
+                "CREATE VIEW agent_mentions_compatible AS SELECT post_id FROM threads_posts_raw;",
+            )
+            .expect("legacy compatibility view should be created");
+        drop(connection);
+
+        duckdb_service::initialize_database()
+            .expect("schema initialization should remove the legacy view");
+        assert!(!database_object_exists(
+            &database_path,
+            "agent_mentions_compatible"
+        ));
+
+        duckdb_service::reset_local_pipeline_data()
+            .expect("pipeline reset should not depend on the legacy object");
+        cleanup_database_files(&database_path);
+    }
+
+    #[test]
     fn validates_sample_full_mvp_flow() {
         let database_path = temp_database_path();
         cleanup_database_files(&database_path);
@@ -611,6 +653,19 @@ mod tests {
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(database_path.with_extension("duckdb.wal"));
         let _ = fs::remove_file(database_path.with_extension("duckdb.tmp"));
+    }
+
+    fn database_object_exists(database_path: &PathBuf, object_name: &str) -> bool {
+        let connection = Connection::open(database_path)
+            .expect("database should open for compatibility object inspection");
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE lower(table_name) = lower(?1)",
+                [object_name],
+                |row| row.get(0),
+            )
+            .expect("compatibility object count should be readable");
+        count > 0
     }
 
     fn should_cleanup_report_exports() -> bool {

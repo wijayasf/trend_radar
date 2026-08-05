@@ -158,6 +158,8 @@ The official Threads API remains the preferred connector. An experimental fallba
 
 The fallback stores the Apify token in backend environment variables only and labels raw rows with `source_type = apify_threads_scraper`. Before saving, it applies an entity-first gate using the same known aliases and strict unknown-candidate rules as entity detection. Generic AI Agent or MCP discussion is discarded when no concrete name can be extracted. `MCP` alone is context, not a rankable entity. Unknown names such as `Graphify` or `Headroom` enter Candidate Review as pending and do not affect weekly rankings until approved.
 
+The actor requires at least 10 max posts. The backend adjusts smaller values to 10. Synchronous actor timeout defaults to 300 seconds and can be changed with `APIFY_RUN_TIMEOUT_SECONDS` (bounded to 30-900 seconds).
+
 Do not use the Apify fallback in production without legal and compliance review.
 
 ## Review Web Demo
