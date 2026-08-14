@@ -81,6 +81,7 @@
   let discoverySeedTestResult: DiscoverySeedTestResult | null = null;
   let isTestingDiscoverySeed = false;
   let isRunningDiscovery = false;
+  let isReplayingApify = false;
   let apifyActorId = 'none';
   let apifyActorRunId = 'none';
   let apifyFilteredOutTotal = 0;
@@ -485,7 +486,8 @@
 
   function stepStatus(step: string): StepStatus {
     if (step === 'discovery') {
-      if (isRunningDiscovery || isCollecting || isImportingSamples) return 'Running';
+      if (isRunningDiscovery || isReplayingApify || isCollecting || isImportingSamples)
+        return 'Running';
       if (isErrorStatus(discoveryStatus) || isErrorStatus(collectStatus)) return 'Error';
       if (discoveryTextMissingTotal > 0) return 'Needs attention';
       if (rawPostsCount > 0) return 'Completed';
@@ -567,6 +569,12 @@
     }
     if (raw.toLowerCase().includes('apify actor is still running or timed out')) {
       return 'Apify actor is still running or timed out. Try again with fewer seeds or wait longer.';
+    }
+    if (raw.includes('Live Apify crawl is disabled to protect trial usage')) {
+      return 'Live Apify crawl is disabled to protect trial usage. Use replay mode or enable APIFY_LIVE_CRAWL_ENABLED=true.';
+    }
+    if (raw.includes('Live Apify crawl session limit reached')) {
+      return raw.replace(/^Error:\s*/, '');
     }
     if (raw.toLowerCase().includes('text is unavailable') || raw.toLowerCase().includes('text_missing')) {
       return 'Post detail was fetched, but text is unavailable for one or more posts.';
@@ -857,30 +865,7 @@
           seeds,
           maxPerSeed: apifyMaxPosts,
         });
-        discoveryMode = result.mode;
-        discoveryFetchedTotal = result.fetched_total;
-        discoverySavedTotal = result.saved_total;
-        discoveryDuplicatesSkipped = result.duplicates_skipped;
-        discoverySeedsProcessed = seeds.length;
-        discoveryStatus = `Apify fallback kept ${result.saved_total} posts with named entities and filtered ${result.filtered_out_total} of ${result.fetched_total} fetched items.`;
-        discoveryLastErrorSummary = result.safe_error_summary || 'none';
-        apifyActorId = result.actor_id;
-        apifyActorRunId = result.actor_run_id;
-        apifyFilteredOutTotal = result.filtered_out_total;
-        apifyEntityGateIncludedTotal = result.entity_gate_included_total;
-        apifyEntityGateFilteredTotal = result.entity_gate_filtered_total;
-        apifyFilterNoNamedEntity = result.filtered_out_by_reason.no_named_entity;
-        apifyFilterRecruitmentOrJobPost =
-          result.filtered_out_by_reason.recruitment_or_job_post;
-        apifyFilterGenericMcpOnly = result.filtered_out_by_reason.generic_mcp_only;
-        apifyFilterGenericAiAgentOnly = result.filtered_out_by_reason.generic_ai_agent_only;
-        apifyFilterGenericThreadbait = result.filtered_out_by_reason.generic_threadbait;
-        apifyFilterAmbiguousWithoutEntity =
-          result.filtered_out_by_reason.ambiguous_without_entity;
-        apifyFilterEmptyText = result.filtered_out_by_reason.empty_text;
-        apifyFilterDuplicate = result.filtered_out_by_reason.duplicate;
-        apifySampleIncluded = result.sample_included;
-        apifySampleFilteredOut = result.sample_filtered_out;
+        applyApifyResult(result, seeds.length, 'Apify live crawl');
         await refreshRawPostsCount();
         return;
       }
@@ -938,15 +923,84 @@
     }
   }
 
+  function applyApifyResult(
+    result: ApifyDiscoveryResult,
+    seedsProcessed: number,
+    label: string,
+  ) {
+    discoveryMode = result.mode;
+    discoveryFetchedTotal = result.fetched_total;
+    discoverySavedTotal = result.saved_total;
+    discoveryDuplicatesSkipped = result.duplicates_skipped;
+    discoverySeedsProcessed = seedsProcessed;
+    discoveryStatus = `${label} kept ${result.saved_total} posts with named entities and filtered ${result.filtered_out_total} of ${result.fetched_total} fetched items.${result.safe_error_summary ? ` ${result.safe_error_summary}` : ''}`;
+    discoveryLastErrorSummary = result.safe_error_summary || 'none';
+    apifyActorId = result.actor_id;
+    apifyActorRunId = result.actor_run_id;
+    apifyFilteredOutTotal = result.filtered_out_total;
+    apifyEntityGateIncludedTotal = result.entity_gate_included_total;
+    apifyEntityGateFilteredTotal = result.entity_gate_filtered_total;
+    apifyFilterNoNamedEntity = result.filtered_out_by_reason.no_named_entity;
+    apifyFilterRecruitmentOrJobPost = result.filtered_out_by_reason.recruitment_or_job_post;
+    apifyFilterGenericMcpOnly = result.filtered_out_by_reason.generic_mcp_only;
+    apifyFilterGenericAiAgentOnly = result.filtered_out_by_reason.generic_ai_agent_only;
+    apifyFilterGenericThreadbait = result.filtered_out_by_reason.generic_threadbait;
+    apifyFilterAmbiguousWithoutEntity =
+      result.filtered_out_by_reason.ambiguous_without_entity;
+    apifyFilterEmptyText = result.filtered_out_by_reason.empty_text;
+    apifyFilterDuplicate = result.filtered_out_by_reason.duplicate;
+    apifySampleIncluded = result.sample_included;
+    apifySampleFilteredOut = result.sample_filtered_out;
+  }
+
+  async function replayLastApifyCrawl() {
+    if (isReplayingApify || isRunningDiscovery || isFullFlowRunning()) return;
+
+    isReplayingApify = true;
+    discoveryStatus = 'Reprocessing cached Apify output...';
+    resetDiscoveryDiagnostics();
+
+    try {
+      const result = await invoke<ApifyDiscoveryResult>('replay_last_apify_crawl');
+      applyApifyResult(result, 0, 'Apify cache replay');
+      await refreshRawPostsCount();
+    } catch (error) {
+      discoveryStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isReplayingApify = false;
+    }
+  }
+
   async function testDiscoverySeed() {
     const keyword = discoverySeedTestKeyword.trim();
-    if (!keyword || isTestingDiscoverySeed || isFullFlowRunning()) return;
+    if (!keyword || isTestingDiscoverySeed || isReplayingApify || isFullFlowRunning()) return;
 
     isTestingDiscoverySeed = true;
     discoverySeedTestStatus = `Testing seed "${keyword}"...`;
     discoverySeedTestResult = null;
 
     try {
+      if (discoverySource === 'apify_threads_scraper') {
+        const result = await invoke<ApifyDiscoveryResult>('run_apify_discovery_crawl', {
+          seeds: [keyword],
+          maxPerSeed: 10,
+        });
+        applyApifyResult(result, 1, 'Apify single-seed debug run');
+        discoverySeedTestResult = {
+          seed_keyword: keyword,
+          status: result.fetched_total === 0 ? 'zero_result' : 'success',
+          fetched_count: result.fetched_total,
+          detail_fetched_count: result.fetched_total,
+          text_available_count:
+            result.fetched_total - result.filtered_out_by_reason.empty_text,
+          sample_text_snippet: result.sample_included[0]?.text_snippet || '',
+          error_summary: result.safe_error_summary,
+        };
+        discoverySeedTestStatus = `Apify seed test completed. This consumed one live actor run.`;
+        await refreshRawPostsCount();
+        return;
+      }
+
       const result = await invoke<DiscoverySeedTestResult>('test_discovery_seed', { keyword });
       discoverySeedTestResult = result;
       discoverySeedTestStatus =
@@ -1327,7 +1381,7 @@
           <select
             id="discovery-source"
             bind:value={discoverySource}
-            disabled={isRunningDiscovery || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
           >
             <option value="official_threads">Official Threads API</option>
             <option value="apify_threads_scraper">Apify fallback</option>
@@ -1351,10 +1405,13 @@
             min={discoverySource === 'apify_threads_scraper' ? 10 : 1}
             max="50"
             bind:value={discoveryMaxPerSeed}
-            disabled={isRunningDiscovery || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
             aria-label="Max per seed"
           />
-          <button type="submit" disabled={isRunningDiscovery || isFullFlowRunning()}>
+          <button
+            type="submit"
+            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
+          >
             {#if isRunningDiscovery}
               {@render LoadingLabel('Running...')}
             {:else}
@@ -1375,12 +1432,32 @@
           <p class="panel-note">
             The Apify actor requires at least 10 max posts. Lower values are adjusted to 10.
           </p>
+          <p class="panel-note">
+            One live crawl sends all seed keywords in a single actor run. Live runs are disabled by
+            default and limited per app session to protect trial usage.
+          </p>
+          <div class="export-actions">
+            <button
+              type="button"
+              on:click={replayLastApifyCrawl}
+              disabled={isReplayingApify || isRunningDiscovery || isFullFlowRunning()}
+            >
+              {#if isReplayingApify}
+                {@render LoadingLabel('Reprocessing...')}
+              {:else}
+                Reprocess Last Apify Result
+              {/if}
+            </button>
+          </div>
+          <p class="panel-note">
+            Uses cached Apify output and does not consume Apify usage.
+          </p>
           <label for="apify-seeds">Apify seeds</label>
           <textarea
             id="apify-seeds"
             bind:value={apifySeedsText}
             rows="7"
-            disabled={isRunningDiscovery || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
           ></textarea>
         {/if}
       </form>
@@ -1405,7 +1482,7 @@
         <span>Last successful seed: {discoveryLastSuccessfulSeed}</span>
         <span>Last error: {discoveryLastErrorSummary}</span>
         <span>Permission limited hint: {discoveryPermissionLimitedHint ? 'yes' : 'no'}</span>
-        {#if discoverySource === 'apify_threads_scraper' || discoveryMode === 'apify_threads_scraper'}
+        {#if discoverySource === 'apify_threads_scraper' || discoveryMode === 'apify_threads_scraper' || discoveryMode === 'apify_cache_replay'}
           <span>Apify actor: {apifyActorId}</span>
           <span>Apify actor run ID: {apifyActorRunId}</span>
           <span>Entity gate included: {apifyEntityGateIncludedTotal}</span>
@@ -1463,18 +1540,23 @@
       {/if}
 
       <form on:submit|preventDefault={testDiscoverySeed}>
-        <label for="discovery-seed-test">Single seed test</label>
+        <label for="discovery-seed-test">Single seed test (debug only)</label>
+        {#if discoverySource === 'apify_threads_scraper'}
+          <p class="panel-note">
+            Apify single-seed debug runs consume live usage and count toward the session limit.
+          </p>
+        {/if}
         <div class="collector-row">
           <input
             id="discovery-seed-test"
             bind:value={discoverySeedTestKeyword}
             placeholder="AI Agent"
             autocomplete="off"
-            disabled={isTestingDiscoverySeed || isFullFlowRunning()}
+            disabled={isTestingDiscoverySeed || isReplayingApify || isFullFlowRunning()}
           />
           <button
             type="submit"
-            disabled={isTestingDiscoverySeed || isFullFlowRunning() || !discoverySeedTestKeyword.trim()}
+            disabled={isTestingDiscoverySeed || isReplayingApify || isFullFlowRunning() || !discoverySeedTestKeyword.trim()}
           >
             {#if isTestingDiscoverySeed}
               {@render LoadingLabel('Testing...')}

@@ -1,9 +1,13 @@
 use std::collections::HashSet;
 use std::env;
-use std::time::Duration;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::models::threads::{
@@ -16,14 +20,31 @@ use crate::utils::config;
 const APIFY_TOKEN_ENV: &str = "APIFY_TOKEN";
 const APIFY_THREADS_ACTOR_ID_ENV: &str = "APIFY_THREADS_ACTOR_ID";
 const APIFY_RUN_TIMEOUT_SECONDS_ENV: &str = "APIFY_RUN_TIMEOUT_SECONDS";
+const APIFY_LIVE_CRAWL_ENABLED_ENV: &str = "APIFY_LIVE_CRAWL_ENABLED";
+const APIFY_MAX_LIVE_RUNS_PER_SESSION_ENV: &str = "APIFY_MAX_LIVE_RUNS_PER_SESSION";
+const APIFY_CACHE_TTL_HOURS_ENV: &str = "APIFY_CACHE_TTL_HOURS";
 const DEFAULT_APIFY_THREADS_ACTOR_ID: &str = "futurizerush/meta-threads-scraper";
 const APIFY_SOURCE_TYPE: &str = "apify_threads_scraper";
+const APIFY_REPLAY_SOURCE_TYPE: &str = "apify_cache_replay";
+const APIFY_CACHE_RELATIVE_PATH: &str = "data/cache/apify-last-run.json";
 const DEFAULT_MAX_PER_SEED: usize = 10;
 const MIN_APIFY_MAX_POSTS: usize = 10;
 const DEFAULT_APIFY_RUN_TIMEOUT_SECONDS: u64 = 300;
 const MIN_APIFY_RUN_TIMEOUT_SECONDS: u64 = 30;
 const MAX_APIFY_RUN_TIMEOUT_SECONDS: u64 = 900;
+const DEFAULT_APIFY_MAX_LIVE_RUNS_PER_SESSION: usize = 1;
+const DEFAULT_APIFY_CACHE_TTL_HOURS: u64 = 24;
 const SAMPLE_LIMIT: usize = 6;
+
+static APIFY_LIVE_RUN_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ApifyDatasetCache {
+    cached_at_epoch_seconds: u64,
+    actor_id: String,
+    actor_run_id: String,
+    items: Vec<Value>,
+}
 
 const DEFAULT_APIFY_SEEDS: &[&str] = &[
     "AI Agent",
@@ -74,16 +95,57 @@ pub fn run_apify_discovery_crawl(
         return Err("At least one Apify seed keyword is required.".to_string());
     }
 
+    reserve_live_run()?;
     let actor_id = read_actor_id();
     let max_posts = normalize_max_posts(max_per_seed);
-    let entity_gate = entity_detector::NamedEntityGateDetector::load()?;
     let (items, actor_run_id) = call_apify_actor(&actor_id, &seeds, max_posts)?;
+    let cache_warning = write_apify_cache(&actor_id, &actor_run_id, &items)
+        .err()
+        .map(|_| {
+            "Live crawl succeeded, but the local Apify cache could not be updated.".to_string()
+        })
+        .unwrap_or_default();
+
+    process_apify_items(
+        items,
+        actor_id,
+        actor_run_id,
+        APIFY_SOURCE_TYPE,
+        cache_warning,
+    )
+}
+
+pub fn replay_last_apify_crawl() -> Result<ApifyDiscoveryResult, String> {
+    replay_apify_cache_at(&apify_cache_path())
+}
+
+fn replay_apify_cache_at(cache_path: &Path) -> Result<ApifyDiscoveryResult, String> {
+    let cache = read_apify_cache_at(cache_path)?;
+    let cache_note = cache_replay_note(cache.cached_at_epoch_seconds, read_cache_ttl_hours());
+
+    process_apify_items(
+        cache.items,
+        cache.actor_id,
+        cache.actor_run_id,
+        APIFY_REPLAY_SOURCE_TYPE,
+        cache_note,
+    )
+}
+
+fn process_apify_items(
+    items: Vec<Value>,
+    actor_id: String,
+    actor_run_id: String,
+    mode: &str,
+    safe_error_summary: String,
+) -> Result<ApifyDiscoveryResult, String> {
+    let entity_gate = entity_detector::NamedEntityGateDetector::load()?;
     let fetched_total = items.len();
     let normalized = normalize_filter_and_dedupe_items(items, &entity_gate);
     let saved_total = duckdb_service::save_threads_raw_posts(&normalized.posts)?;
 
     Ok(ApifyDiscoveryResult {
-        mode: APIFY_SOURCE_TYPE.to_string(),
+        mode: mode.to_string(),
         actor_id,
         actor_run_id,
         fetched_total,
@@ -95,7 +157,7 @@ pub fn run_apify_discovery_crawl(
         filtered_out_by_reason: normalized.filter_reasons,
         sample_filtered_out: normalized.sample_filtered_out,
         sample_included: normalized.sample_included,
-        safe_error_summary: String::new(),
+        safe_error_summary,
     })
 }
 
@@ -108,12 +170,7 @@ fn call_apify_actor(
     let actor_url_id = actor_id.trim().replace('/', "~");
     let endpoint =
         format!("https://api.apify.com/v2/acts/{actor_url_id}/run-sync-get-dataset-items");
-    let input = serde_json::json!({
-        "mode": "search",
-        "keywords": seeds,
-        "search_filter": "recent",
-        "max_posts": max_posts,
-    });
+    let input = build_actor_input(seeds, max_posts);
     let timeout_seconds = read_run_timeout_seconds();
     let client = Client::builder()
         .timeout(Duration::from_secs(timeout_seconds))
@@ -160,6 +217,143 @@ fn call_apify_actor(
     }
 
     Ok((parse_apify_items(&body_json)?, actor_run_id))
+}
+
+fn build_actor_input(seeds: &[String], max_posts: usize) -> Value {
+    serde_json::json!({
+        "mode": "search",
+        "keywords": seeds,
+        "search_filter": "recent",
+        "max_posts": max_posts,
+    })
+}
+
+fn reserve_live_run() -> Result<(), String> {
+    config::load_env_files_once();
+    let enabled = env_bool(APIFY_LIVE_CRAWL_ENABLED_ENV, false);
+    let max_runs = env_usize(
+        APIFY_MAX_LIVE_RUNS_PER_SESSION_ENV,
+        DEFAULT_APIFY_MAX_LIVE_RUNS_PER_SESSION,
+    )
+    .max(1);
+
+    loop {
+        let used_runs = APIFY_LIVE_RUN_COUNT.load(Ordering::SeqCst);
+        validate_live_run_policy(enabled, max_runs, used_runs)?;
+        if APIFY_LIVE_RUN_COUNT
+            .compare_exchange(used_runs, used_runs + 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
+}
+
+fn validate_live_run_policy(
+    enabled: bool,
+    max_runs: usize,
+    used_runs: usize,
+) -> Result<(), String> {
+    if !enabled {
+        return Err(
+            "Live Apify crawl is disabled to protect trial usage. Use replay mode or enable APIFY_LIVE_CRAWL_ENABLED=true."
+                .to_string(),
+        );
+    }
+
+    if used_runs >= max_runs {
+        return Err(format!(
+            "Live Apify crawl session limit reached ({max_runs}). Use Reprocess Last Apify Result to avoid additional usage."
+        ));
+    }
+
+    Ok(())
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .and_then(|value| match value.as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        })
+        .unwrap_or(default)
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn read_cache_ttl_hours() -> u64 {
+    config::load_env_files_once();
+    env::var(APIFY_CACHE_TTL_HOURS_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_APIFY_CACHE_TTL_HOURS)
+        .max(1)
+}
+
+fn apify_cache_path() -> PathBuf {
+    config::project_root().join(APIFY_CACHE_RELATIVE_PATH)
+}
+
+fn write_apify_cache(actor_id: &str, actor_run_id: &str, items: &[Value]) -> Result<(), String> {
+    write_apify_cache_at(
+        &apify_cache_path(),
+        &ApifyDatasetCache {
+            cached_at_epoch_seconds: unix_timestamp_seconds(),
+            actor_id: actor_id.to_string(),
+            actor_run_id: actor_run_id.to_string(),
+            items: items.to_vec(),
+        },
+    )
+}
+
+fn write_apify_cache_at(path: &Path, cache: &ApifyDatasetCache) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Apify cache path has no parent directory.".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Apify cache directory creation failed: {error}"))?;
+    let contents = serde_json::to_vec_pretty(cache)
+        .map_err(|error| format!("Apify cache serialization failed: {error}"))?;
+    fs::write(path, contents).map_err(|error| format!("Apify cache write failed: {error}"))
+}
+
+fn read_apify_cache_at(path: &Path) -> Result<ApifyDatasetCache, String> {
+    let contents = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "No cached Apify result is available. Run one enabled live crawl first.".to_string()
+        } else {
+            format!("Apify cache read failed: {error}")
+        }
+    })?;
+    serde_json::from_slice(&contents)
+        .map_err(|error| format!("Apify cache JSON is invalid: {error}"))
+}
+
+fn cache_replay_note(cached_at_epoch_seconds: u64, ttl_hours: u64) -> String {
+    let age_seconds = unix_timestamp_seconds().saturating_sub(cached_at_epoch_seconds);
+    let age_hours = age_seconds / 3_600;
+    if age_hours > ttl_hours {
+        format!(
+            "Replayed cached Apify data without live usage. Cache age is {age_hours} hours, older than the configured {ttl_hours}-hour TTL."
+        )
+    } else {
+        format!("Replayed cached Apify data without live usage. Cache age is {age_hours} hours.")
+    }
+}
+
+fn unix_timestamp_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn normalize_filter_and_dedupe_items(
@@ -548,6 +742,7 @@ impl FilterReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::{candidate_review, region_classifier, weekly_aggregator};
 
     #[test]
     fn enforces_apify_minimum_max_posts() {
@@ -565,6 +760,135 @@ mod tests {
         assert_eq!(normalize_run_timeout_seconds(Some("10")), 30);
         assert_eq!(normalize_run_timeout_seconds(Some("450")), 450);
         assert_eq!(normalize_run_timeout_seconds(Some("1200")), 900);
+    }
+
+    #[test]
+    fn builds_one_actor_input_for_multiple_keywords() {
+        let seeds = vec![
+            "AI Agent".to_string(),
+            "Claude Code".to_string(),
+            "Ponytail Claude Code".to_string(),
+        ];
+        let input = build_actor_input(&seeds, 10);
+
+        assert_eq!(input["mode"], "search");
+        assert_eq!(input["max_posts"], 10);
+        assert_eq!(input["keywords"].as_array().map(Vec::len), Some(3));
+        assert_eq!(input["keywords"][1], "Claude Code");
+    }
+
+    #[test]
+    fn blocks_disabled_and_over_limit_live_runs() {
+        assert_eq!(
+            validate_live_run_policy(false, 1, 0).unwrap_err(),
+            "Live Apify crawl is disabled to protect trial usage. Use replay mode or enable APIFY_LIVE_CRAWL_ENABLED=true."
+        );
+        assert!(validate_live_run_policy(true, 1, 0).is_ok());
+        assert!(validate_live_run_policy(true, 1, 1)
+            .unwrap_err()
+            .contains("session limit reached (1)"));
+    }
+
+    #[test]
+    fn replays_cached_dataset_without_live_api_and_keeps_domains_pending() {
+        let database_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-apify-cache-replay-test.duckdb");
+        let cache_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-apify-cache-replay-test.json");
+        cleanup_test_file(&database_path);
+        cleanup_test_file(&cache_path);
+        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+
+        let cache = ApifyDatasetCache {
+            cached_at_epoch_seconds: unix_timestamp_seconds(),
+            actor_id: "test/actor".to_string(),
+            actor_run_id: "cached-run-1".to_string(),
+            items: vec![
+                serde_json::json!({
+                    "post_code": "cached-claude-code",
+                    "text_content": "Claude Code is useful for agent workflows.",
+                    "search_keyword": "Claude Code",
+                    "post_url": "https://threads.net/t/cached-claude-code",
+                    "created_at": "2026-08-10T09:00:00Z"
+                }),
+                serde_json::json!({
+                    "post_code": "cached-folk",
+                    "text_content": "Introducing the most powerful personal AI agent. folk.com",
+                    "search_keyword": "AI Agent",
+                    "post_url": "https://threads.net/t/cached-folk",
+                    "created_at": "2026-08-10T10:00:00Z"
+                }),
+                serde_json::json!({
+                    "post_code": "cached-role",
+                    "text_content": "Start paying attention to AI Agent Engineer roles.",
+                    "search_keyword": "AI Agent",
+                    "post_url": "https://threads.net/t/cached-role",
+                    "created_at": "2026-08-10T11:00:00Z"
+                }),
+                serde_json::json!({
+                    "post_code": "cached-copilots",
+                    "text_content": "Copilots suggest code while autonomous AI agents plan work.",
+                    "search_keyword": "AI Agent",
+                    "post_url": "https://threads.net/t/cached-copilots",
+                    "created_at": "2026-08-10T12:00:00Z"
+                }),
+                serde_json::json!({
+                    "post_code": "cached-youtube",
+                    "text_content": "Need an MCP server connector for YouTube.",
+                    "search_keyword": "MCP server",
+                    "post_url": "https://threads.net/t/cached-youtube",
+                    "created_at": "2026-08-10T13:00:00Z"
+                }),
+            ],
+        };
+        write_apify_cache_at(&cache_path, &cache).expect("test cache should write");
+
+        let replay = replay_apify_cache_at(&cache_path).expect("cache replay should succeed");
+        assert_eq!(replay.mode, APIFY_REPLAY_SOURCE_TYPE);
+        assert_eq!(replay.fetched_total, 5);
+        assert_eq!(replay.saved_total, 2);
+        assert!(replay.safe_error_summary.contains("without live usage"));
+
+        let detection = entity_detector::detect_agent_mentions()
+            .expect("cached entity detection should succeed");
+        assert!(detection
+            .preview
+            .iter()
+            .any(|mention| mention.agent_name == "Claude Code"));
+        let candidates =
+            candidate_review::list_candidate_entities().expect("cached candidates should load");
+        assert_eq!(candidates.pending_count, 1);
+        assert_eq!(candidates.candidates[0].candidate_name, "folk.com");
+
+        region_classifier::classify_regions().expect("cached regions should classify");
+        let before_approval = weekly_aggregator::aggregate_weekly_metrics()
+            .expect("cached weekly metrics should aggregate");
+        assert!(before_approval
+            .top_global
+            .iter()
+            .all(|metric| metric.agent_name != "folk.com"));
+
+        candidate_review::approve_candidate_entity(
+            "folk.com".to_string(),
+            "folk.com".to_string(),
+            "generic_agent_framework".to_string(),
+            Some("test approval".to_string()),
+        )
+        .expect("domain candidate approval should succeed");
+        let after_approval = weekly_aggregator::aggregate_weekly_metrics()
+            .expect("approved domain should aggregate");
+        assert!(after_approval
+            .top_global
+            .iter()
+            .any(|metric| metric.agent_name == "folk.com"));
+
+        cleanup_test_file(&cache_path);
+        cleanup_test_file(&database_path);
+        cleanup_test_file(&PathBuf::from(format!("{}.wal", database_path.display())));
+    }
+
+    fn cleanup_test_file(path: &Path) {
+        let _ = fs::remove_file(path);
     }
 
     #[test]

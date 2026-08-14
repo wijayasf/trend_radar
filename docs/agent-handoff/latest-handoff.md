@@ -1,37 +1,40 @@
 # Latest Handoff
 
-Date: 2026-08-05
-Session: 039-non-tool-noise-cleanup
+Date: 2026-08-14
+Session: 041-budget-safe-apify-replay
 Agent: Codex
 
 ## Current State
 
-The named-entity pipeline now blocks the remaining live-crawl platform and recruitment noise. Weekly dashboard/export queries show only the latest week, and free usage credits are recognized as a positive cost signal.
+Apify discovery is budget-safe by default. A crawl sends all seeds in one actor request, successful live datasets are cached locally, and replay applies the latest filtering pipeline without network usage. No live Apify crawl was run during this patch.
 
 ## Key Changes
 
-- Explicitly rejected `GenAI`, social platforms, appointment setter/closer roles, and related phrases as unknown candidates.
-- Added Apify filter reason `recruitment_or_job_post`; recruitment posts still pass when a concrete named tool such as `Claude Code` is present.
-- Made known aliases authoritative within a post while retaining strong product-shaped candidates such as `Graphify` and `Headroom`.
-- Limited ranking and export loaders to the maximum `week_start`, preventing historical `Claude Code` rows from appearing as duplicates.
-- Classified free usage/account credit phrases as `cost_positive`.
-- Made Apify included/filtered diagnostics wrap long metadata and snippets cleanly.
+- Confirmed and tested one actor input with the complete `keywords` array.
+- Added ignored cache path `data/cache/apify-last-run.json` and command `replay_last_apify_crawl`.
+- Added `Reprocess Last Apify Result` UI action and explicit no-usage copy.
+- Added default-off `APIFY_LIVE_CRAWL_ENABLED`, per-process live-run limit, cache TTL note, and existing bounded timeout configuration.
+- Marked Apify single-seed testing as a live, credit-consuming debug action subject to the same guard.
+- Rejected `Agent Engineer`, `AI Agent Engineer`, `Copilots`, and `YouTube` as unknown candidates while preserving configured `GitHub Copilot` detection.
+- Required launch/identity language plus product context for domain-shaped candidates. `folk.com` can remain pending from launch evidence and stays out of weekly metrics until approved.
 
 ## Validation Snapshot
 
-- Frontend production build, Rust format/check, full sample flow, and raw insert regression passed.
-- All 22 entity detector tests, 3 Apify tests, 8 cost tests, and 2 weekly tests passed.
+- Cache replay fixture: 5 cached posts, 2 included (`Claude Code`, launch-evidenced `folk.com`), 3 noise posts filtered.
+- `folk.com` was pending and excluded from weekly metrics before approval; it entered metrics only after explicit test approval.
+- Frontend build, Rust format/check, full sample flow, raw insert regression, entity, Apify, cost, weekly, candidate, and reset suites passed.
 - Existing Rust placeholder/dead-code warnings remain unchanged.
-- Security scan found only literal pattern names in historical progress notes, with no secret values; ignored runtime files remain untracked and `src-tauri/data` is empty.
+- Security scan found only literal pattern names in historical reports, with no secret values. Cache/runtime/generated paths remain ignored and untracked.
 
 ## Pending
 
-- Run a fresh live Apify crawl to confirm the four observed candidates no longer appear in Candidate Review.
-- Push the four local quality commits only when explicitly requested.
+- Run a manual UI replay against a real cache when one is available locally.
+- Do not run another live Apify crawl until budget usage is intentionally approved.
+- Push only when explicitly requested after reviewing the local commit set.
 
 ## Risk Note
 
-The new filters are deterministic and covered by real-snippet tests, but the latest live Apify dataset has not been fetched again after this patch. Recruitment posts that mention a concrete named tool are intentionally retained for product-signal review.
+The cache is local and ignored; machines without a prior successful live run will receive a friendly missing-cache error. The live-run counter resets when the desktop process restarts, so it is a session guard rather than a durable billing quota.
 
 ## Token Usage
 

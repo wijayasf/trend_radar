@@ -85,6 +85,8 @@ Required variable names are `THREADS_ACCESS_TOKEN`, `THREADS_USER_ID`, `APP_ENV`
 
 Optional Apify fallback variables are documented in `.env.example`.
 
+Live Apify crawling is disabled by default. Enable it explicitly only when a paid/live actor run is intended; cached replay remains available without API usage.
+
 Do not commit `.env`.
 
 ## Local Development
@@ -157,6 +159,12 @@ Use `Clear Local Demo Data` to reset raw posts, mentions, crawl runs, and weekly
 The official Threads API remains the preferred connector. An experimental fallback connector is available for Apify actor `futurizerush/meta-threads-scraper` when review/demo work needs an alternate source.
 
 The fallback stores the Apify token in backend environment variables only and labels raw rows with `source_type = apify_threads_scraper`. Before saving, it applies an entity-first gate using the same known aliases and strict unknown-candidate rules as entity detection. Generic AI Agent or MCP discussion and recruitment/job posts without a concrete named tool are discarded. `MCP` alone is context, not a rankable entity. Unknown names such as `Graphify` or `Headroom` enter Candidate Review as pending and do not affect weekly rankings until approved.
+
+Each Discovery Crawl sends the complete seed list to one actor request through the actor's `keywords` array. A successful live result is cached at `data/cache/apify-last-run.json`, which is ignored by Git. `Reprocess Last Apify Result` runs the current gate and persistence logic against that cache without calling Apify. Stale caches remain replayable and show an age warning based on `APIFY_CACHE_TTL_HOURS`.
+
+Budget guardrails use `APIFY_LIVE_CRAWL_ENABLED=false` by default and limit live calls with `APIFY_MAX_LIVE_RUNS_PER_SESSION=1`. The single-seed Apify test is a live debug action, consumes usage, and counts toward the same session limit.
+
+Domain-shaped names require nearby launch/identity language plus AI product context before they can enter Candidate Review. They remain pending and excluded from weekly rankings until explicitly approved.
 
 Dashboard rankings and report exports display the latest aggregated week by default. Historical weekly rows remain in DuckDB for audit and future comparisons.
 

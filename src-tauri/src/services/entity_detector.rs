@@ -296,7 +296,7 @@ fn detect_candidate_mentions(
                 known_aliases,
             )
             || (!matched_known_aliases.is_empty()
-                && !is_strong_unknown_candidate(&candidate, &normalized_candidate))
+                && !is_strong_unknown_candidate(&candidate, &normalized_candidate, normalized_text))
             || seen_agents.iter().any(|agent| {
                 let normalized_agent = normalize_text(agent);
                 normalized_agent == normalized_candidate
@@ -567,7 +567,9 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "ai agent",
         "ai agents",
         "agent trend radar",
+        "agent engineer",
         "ai agent trend",
+        "ai agent engineer",
         "ai coding",
         "api",
         "apis",
@@ -578,6 +580,7 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "closer",
         "code",
         "copilot",
+        "copilots",
         "developer",
         "entire",
         "genai",
@@ -608,6 +611,7 @@ fn is_candidate_stop_phrase(normalized_candidate: &str) -> bool {
         "tools",
         "tools ai",
         "trend radar",
+        "youtube",
     ];
 
     stop_phrases.contains(&normalized_candidate)
@@ -631,24 +635,68 @@ fn is_meaningful_unknown_candidate(
         return true;
     }
 
+    if candidate.split_whitespace().any(is_domain_like) {
+        return has_domain_product_evidence(normalized_text, normalized_candidate);
+    }
+
     if token_count == 1 {
-        return candidate.split_whitespace().any(|token| {
-            is_domain_like(token) || is_camel_case_token(token) || has_product_name_affix(token)
-        });
+        return candidate
+            .split_whitespace()
+            .any(|token| is_camel_case_token(token) || has_product_name_affix(token));
     }
 
     looks_like_product_or_tool_phrase(candidate, normalized_candidate)
 }
 
-fn is_strong_unknown_candidate(candidate: &str, normalized_candidate: &str) -> bool {
+fn is_strong_unknown_candidate(
+    candidate: &str,
+    normalized_candidate: &str,
+    normalized_text: &str,
+) -> bool {
     if is_candidate_stop_phrase(normalized_candidate) {
         return false;
     }
 
+    if candidate.split_whitespace().any(is_domain_like) {
+        return has_domain_product_evidence(normalized_text, normalized_candidate);
+    }
+
     unknown_candidate_allowlist().contains(&normalized_candidate)
-        || candidate.split_whitespace().any(|token| {
-            is_domain_like(token) || is_camel_case_token(token) || has_product_name_affix(token)
-        })
+        || candidate
+            .split_whitespace()
+            .any(|token| is_camel_case_token(token) || has_product_name_affix(token))
+}
+
+fn has_domain_product_evidence(normalized_text: &str, normalized_candidate: &str) -> bool {
+    let context = context_window(normalized_text, normalized_candidate);
+    let has_identity_signal = [
+        "introducing",
+        "introduce",
+        "announcing",
+        "announce",
+        "launched",
+        "launching",
+        "launch",
+        "meet",
+        "built",
+        "released",
+    ]
+    .iter()
+    .any(|term| contains_alias(&context, term));
+    let has_product_signal = [
+        "ai agent",
+        "agent tool",
+        "ai tool",
+        "tool",
+        "app",
+        "assistant",
+        "framework",
+        "platform",
+    ]
+    .iter()
+    .any(|term| contains_alias(&context, term));
+
+    has_identity_signal && has_product_signal
 }
 
 fn looks_like_product_or_tool_phrase(candidate: &str, normalized_candidate: &str) -> bool {
@@ -716,6 +764,7 @@ fn candidate_stopwords() -> &'static [&'static str] {
         "api",
         "apis",
         "appointment",
+        "engineer",
         "breaking",
         "but",
         "can",
@@ -725,6 +774,7 @@ fn candidate_stopwords() -> &'static [&'static str] {
         "code",
         "codex",
         "copilot",
+        "copilots",
         "did",
         "don t",
         "dont",
@@ -782,6 +832,7 @@ fn candidate_stopwords() -> &'static [&'static str] {
         "with",
         "you",
         "your",
+        "youtube",
     ]
 }
 
@@ -1229,6 +1280,10 @@ mod tests {
             "Appointment Setter",
             "Closer",
             "Appointment Setter/Closer",
+            "Agent Engineer",
+            "AI Agent Engineer",
+            "Copilots",
+            "YouTube",
         ] {
             let text = format!("{candidate} appears near an AI agent workflow discussion.");
             let mentions =
@@ -1241,6 +1296,48 @@ mod tests {
                 "{candidate} must not enter candidate review"
             );
         }
+    }
+
+    #[test]
+    fn keeps_known_copilot_alias_while_rejecting_generic_copilots() {
+        let mentions = detect_mentions_in_text(
+            "post-copilot",
+            "GitHub Copilot is useful, but generic Copilots are not a concrete tool name.",
+            &test_config(),
+            &HashMap::new(),
+        );
+
+        assert!(mentions.iter().any(|mention| {
+            mention.agent_name == "GitHub Copilot" && mention.detection_source == "known_alias"
+        }));
+        assert!(mentions.iter().all(|mention| {
+            mention.category != "unknown_candidate" || mention.agent_name != "Copilots"
+        }));
+    }
+
+    #[test]
+    fn requires_product_identity_evidence_for_domain_candidates() {
+        let launch_mentions = detect_mentions_in_text(
+            "post-domain-launch",
+            "Introducing the most powerful personal AI agent. folk.com",
+            &test_config(),
+            &HashMap::new(),
+        );
+        assert!(launch_mentions.iter().any(|mention| {
+            mention.agent_name == "folk.com"
+                && mention.category == "unknown_candidate"
+                && mention.review_status == "pending"
+        }));
+
+        let random_mentions = detect_mentions_in_text(
+            "post-domain-random",
+            "Read the AI agent article at folk.com for background information.",
+            &test_config(),
+            &HashMap::new(),
+        );
+        assert!(random_mentions
+            .iter()
+            .all(|mention| mention.agent_name != "folk.com"));
     }
 
     #[test]
