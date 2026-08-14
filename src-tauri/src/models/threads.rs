@@ -135,6 +135,13 @@ pub struct ApifyDiscoveryResult {
     pub safe_error_summary: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ApifyCacheImportResult {
+    pub imported_count: usize,
+    pub cache_path: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ApifyFilterReasons {
     pub no_named_entity: usize,

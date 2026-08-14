@@ -82,6 +82,8 @@
   let isTestingDiscoverySeed = false;
   let isRunningDiscovery = false;
   let isReplayingApify = false;
+  let isImportingApifyCache = false;
+  let apifyDatasetFilePath = '';
   let apifyActorId = 'none';
   let apifyActorRunId = 'none';
   let apifyFilteredOutTotal = 0;
@@ -274,6 +276,12 @@
     sample_filtered_out: ApifyFilteredPostSample[];
     sample_included: ApifyIncludedPostSample[];
     safe_error_summary: string;
+  };
+
+  type ApifyCacheImportResult = {
+    imported_count: number;
+    cache_path: string;
+    message: string;
   };
 
   type ApifyFilterReasons = {
@@ -486,7 +494,13 @@
 
   function stepStatus(step: string): StepStatus {
     if (step === 'discovery') {
-      if (isRunningDiscovery || isReplayingApify || isCollecting || isImportingSamples)
+      if (
+        isRunningDiscovery ||
+        isReplayingApify ||
+        isImportingApifyCache ||
+        isCollecting ||
+        isImportingSamples
+      )
         return 'Running';
       if (isErrorStatus(discoveryStatus) || isErrorStatus(collectStatus)) return 'Error';
       if (discoveryTextMissingTotal > 0) return 'Needs attention';
@@ -954,7 +968,12 @@
   }
 
   async function replayLastApifyCrawl() {
-    if (isReplayingApify || isRunningDiscovery || isFullFlowRunning()) return;
+    if (
+      isReplayingApify ||
+      isImportingApifyCache ||
+      isRunningDiscovery ||
+      isFullFlowRunning()
+    ) return;
 
     isReplayingApify = true;
     discoveryStatus = 'Reprocessing cached Apify output...';
@@ -968,6 +987,34 @@
       discoveryStatus = `error: ${friendlyError(error)}`;
     } finally {
       isReplayingApify = false;
+    }
+  }
+
+  async function importApifyDatasetCache() {
+    const filePath = apifyDatasetFilePath.trim();
+    if (
+      !filePath ||
+      isImportingApifyCache ||
+      isReplayingApify ||
+      isRunningDiscovery ||
+      isFullFlowRunning()
+    ) return;
+
+    isImportingApifyCache = true;
+    discoveryStatus = 'Importing Apify dataset into the local cache...';
+
+    try {
+      const result = await invoke<ApifyCacheImportResult>('import_apify_dataset_cache', {
+        filePath,
+      });
+      discoveryStatus = `${result.message} Cache: ${result.cache_path}`;
+      discoveryLastErrorSummary = 'none';
+      apifyActorId = 'manual_import';
+      apifyActorRunId = 'manual_import';
+    } catch (error) {
+      discoveryStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isImportingApifyCache = false;
     }
   }
 
@@ -1381,7 +1428,7 @@
           <select
             id="discovery-source"
             bind:value={discoverySource}
-            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isImportingApifyCache || isFullFlowRunning()}
           >
             <option value="official_threads">Official Threads API</option>
             <option value="apify_threads_scraper">Apify fallback</option>
@@ -1405,12 +1452,12 @@
             min={discoverySource === 'apify_threads_scraper' ? 10 : 1}
             max="50"
             bind:value={discoveryMaxPerSeed}
-            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isImportingApifyCache || isFullFlowRunning()}
             aria-label="Max per seed"
           />
           <button
             type="submit"
-            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isImportingApifyCache || isFullFlowRunning()}
           >
             {#if isRunningDiscovery}
               {@render LoadingLabel('Running...')}
@@ -1440,7 +1487,7 @@
             <button
               type="button"
               on:click={replayLastApifyCrawl}
-              disabled={isReplayingApify || isRunningDiscovery || isFullFlowRunning()}
+              disabled={isReplayingApify || isImportingApifyCache || isRunningDiscovery || isFullFlowRunning()}
             >
               {#if isReplayingApify}
                 {@render LoadingLabel('Reprocessing...')}
@@ -1452,12 +1499,37 @@
           <p class="panel-note">
             Uses cached Apify output and does not consume Apify usage.
           </p>
+          <label for="apify-dataset-file">Exported Apify dataset JSON</label>
+          <div class="collector-row import-row">
+            <input
+              id="apify-dataset-file"
+              type="text"
+              bind:value={apifyDatasetFilePath}
+              placeholder="/path/to/apify-dataset.json"
+              disabled={isImportingApifyCache || isReplayingApify || isRunningDiscovery || isFullFlowRunning()}
+            />
+            <button
+              type="button"
+              on:click={importApifyDatasetCache}
+              disabled={!apifyDatasetFilePath.trim() || isImportingApifyCache || isReplayingApify || isRunningDiscovery || isFullFlowRunning()}
+            >
+              {#if isImportingApifyCache}
+                {@render LoadingLabel('Importing...')}
+              {:else}
+                Import Apify Dataset JSON
+              {/if}
+            </button>
+          </div>
+          <p class="panel-note">
+            Import stores the exported array locally. It does not call Apify or process posts until
+            Reprocess Last Apify Result is clicked.
+          </p>
           <label for="apify-seeds">Apify seeds</label>
           <textarea
             id="apify-seeds"
             bind:value={apifySeedsText}
             rows="7"
-            disabled={isRunningDiscovery || isReplayingApify || isFullFlowRunning()}
+            disabled={isRunningDiscovery || isReplayingApify || isImportingApifyCache || isFullFlowRunning()}
           ></textarea>
         {/if}
       </form>

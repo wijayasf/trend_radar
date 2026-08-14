@@ -1,40 +1,38 @@
 # Latest Handoff
 
 Date: 2026-08-14
-Session: 041-budget-safe-apify-replay
+Session: 042-apify-dataset-cache-import
 Agent: Codex
 
 ## Current State
 
-Apify discovery is budget-safe by default. A crawl sends all seeds in one actor request, successful live datasets are cached locally, and replay applies the latest filtering pipeline without network usage. No live Apify crawl was run during this patch.
+Exported Apify dataset arrays can now be imported into the ignored local cache and replayed through the existing entity-first pipeline without any Apify API call. Live crawling remains disabled by default and was not run in this session.
 
 ## Key Changes
 
-- Confirmed and tested one actor input with the complete `keywords` array.
-- Added ignored cache path `data/cache/apify-last-run.json` and command `replay_last_apify_crawl`.
-- Added `Reprocess Last Apify Result` UI action and explicit no-usage copy.
-- Added default-off `APIFY_LIVE_CRAWL_ENABLED`, per-process live-run limit, cache TTL note, and existing bounded timeout configuration.
-- Marked Apify single-seed testing as a live, credit-consuming debug action subject to the same guard.
-- Rejected `Agent Engineer`, `AI Agent Engineer`, `Copilots`, and `YouTube` as unknown candidates while preserving configured `GitHub Copilot` detection.
-- Required launch/identity language plus product context for domain-shaped candidates. `folk.com` can remain pending from launch evidence and stays out of weekly metrics until approved.
+- Added `import_apify_dataset_cache(file_path)` with project-root-relative and absolute path support.
+- Validated a non-empty JSON array and required each item to have string `text_content` plus `post_code` or `post_url`.
+- Added friendly, non-secret errors for missing, invalid, empty, and unsupported files.
+- Added `Import Apify Dataset JSON` UI controls; import does not auto-replay.
+- Kept `data/cache/` ignored and reused `data/cache/apify-last-run.json`.
 
 ## Validation Snapshot
 
-- Cache replay fixture: 5 cached posts, 2 included (`Claude Code`, launch-evidenced `folk.com`), 3 noise posts filtered.
-- `folk.com` was pending and excluded from weekly metrics before approval; it entered metrics only after explicit test approval.
-- Frontend build, Rust format/check, full sample flow, raw insert regression, entity, Apify, cost, weekly, candidate, and reset suites passed.
-- Existing Rust placeholder/dead-code warnings remain unchanged.
-- Security scan found only literal pattern names in historical reports, with no secret values. Cache/runtime/generated paths remain ignored and untracked.
+- Import/replay fixture: 5 imported, 2 included/saved, 3 filtered.
+- Known alias `Claude Code` was detected.
+- `folk.com` stayed pending and outside weekly metrics before approval; it entered only after explicit approval.
+- Frontend build, Rust format/check, full sample flow, raw insert regression, and all 7 Apify connector tests passed.
+- Security scan found no real secret values.
 
 ## Pending
 
-- Run a manual UI replay against a real cache when one is available locally.
-- Do not run another live Apify crawl until budget usage is intentionally approved.
-- Push only when explicitly requested after reviewing the local commit set.
+- Optional manual desktop UI import using a real exported Apify dataset.
+- Do not run live Apify unless its usage is explicitly approved.
+- Do not push until explicitly requested.
 
 ## Risk Note
 
-The cache is local and ignored; machines without a prior successful live run will receive a friendly missing-cache error. The live-run counter resets when the desktop process restarts, so it is a session guard rather than a durable billing quota.
+The importer accepts the current actor dataset fields only and replaces the prior cache only after full validation. The UI intentionally uses a path input instead of a native file picker.
 
 ## Token Usage
 

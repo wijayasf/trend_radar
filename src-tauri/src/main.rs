@@ -15,6 +15,7 @@ fn main() {
             commands::database::reset_local_pipeline_data,
             commands::apify::run_apify_discovery_crawl,
             commands::apify::replay_last_apify_crawl,
+            commands::apify::import_apify_dataset_cache,
             commands::candidates::approve_candidate_entity,
             commands::candidates::ignore_candidate_entity,
             commands::candidates::list_candidate_entities,

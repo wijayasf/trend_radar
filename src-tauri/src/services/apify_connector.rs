@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::models::threads::{
-    ApifyDiscoveryResult, ApifyFilterReasons, ApifyFilteredPostSample, ApifyIncludedPostSample,
-    ThreadPostRaw,
+    ApifyCacheImportResult, ApifyDiscoveryResult, ApifyFilterReasons, ApifyFilteredPostSample,
+    ApifyIncludedPostSample, ThreadPostRaw,
 };
 use crate::services::{duckdb_service, entity_detector};
 use crate::utils::config;
@@ -117,6 +117,95 @@ pub fn run_apify_discovery_crawl(
 
 pub fn replay_last_apify_crawl() -> Result<ApifyDiscoveryResult, String> {
     replay_apify_cache_at(&apify_cache_path())
+}
+
+pub fn import_apify_dataset_cache(file_path: String) -> Result<ApifyCacheImportResult, String> {
+    let source_path = resolve_import_path(&file_path)?;
+    import_apify_dataset_cache_at(&source_path, &apify_cache_path())
+}
+
+fn import_apify_dataset_cache_at(
+    source_path: &Path,
+    cache_path: &Path,
+) -> Result<ApifyCacheImportResult, String> {
+    let contents = fs::read(source_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "Apify dataset file was not found: {}",
+                source_path.display()
+            )
+        } else {
+            format!("Apify dataset file could not be read: {error}")
+        }
+    })?;
+    let value: Value = serde_json::from_slice(&contents)
+        .map_err(|error| format!("Invalid Apify dataset JSON: {error}"))?;
+    let items = value
+        .as_array()
+        .ok_or_else(|| "Unsupported Apify dataset shape: expected a JSON array.".to_string())?;
+
+    if items.is_empty() {
+        return Err("Apify dataset is empty.".to_string());
+    }
+
+    for (index, item) in items.iter().enumerate() {
+        validate_imported_item(item, index)?;
+    }
+
+    write_apify_cache_at(
+        cache_path,
+        &ApifyDatasetCache {
+            cached_at_epoch_seconds: unix_timestamp_seconds(),
+            actor_id: "manual_import".to_string(),
+            actor_run_id: "manual_import".to_string(),
+            items: items.clone(),
+        },
+    )?;
+
+    Ok(ApifyCacheImportResult {
+        imported_count: items.len(),
+        cache_path: cache_path.display().to_string(),
+        message: format!(
+            "Imported {} Apify dataset items into the local cache. Use Reprocess Last Apify Result to process them without an API call.",
+            items.len()
+        ),
+    })
+}
+
+fn resolve_import_path(file_path: &str) -> Result<PathBuf, String> {
+    let trimmed = file_path.trim();
+    if trimmed.is_empty() {
+        return Err("Apify dataset file path is required.".to_string());
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(config::project_root().join(path))
+    }
+}
+
+fn validate_imported_item(item: &Value, index: usize) -> Result<(), String> {
+    if !item.is_object() {
+        return Err(format!(
+            "Unsupported Apify dataset item at index {index}: expected a JSON object."
+        ));
+    }
+
+    if item.get("text_content").and_then(Value::as_str).is_none() {
+        return Err(format!(
+            "Unsupported Apify dataset item at index {index}: text_content must be a string."
+        ));
+    }
+
+    if post_external_id(item).is_empty() {
+        return Err(format!(
+            "Unsupported Apify dataset item at index {index}: post_code or post_url is required."
+        ));
+    }
+
+    Ok(())
 }
 
 fn replay_apify_cache_at(cache_path: &Path) -> Result<ApifyDiscoveryResult, String> {
@@ -328,7 +417,8 @@ fn write_apify_cache_at(path: &Path, cache: &ApifyDatasetCache) -> Result<(), St
 fn read_apify_cache_at(path: &Path) -> Result<ApifyDatasetCache, String> {
     let contents = fs::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            "No cached Apify result is available. Run one enabled live crawl first.".to_string()
+            "No cached Apify result is available. Import an exported dataset or run one enabled live crawl first."
+                .to_string()
         } else {
             format!("Apify cache read failed: {error}")
         }
@@ -790,58 +880,68 @@ mod tests {
     }
 
     #[test]
-    fn replays_cached_dataset_without_live_api_and_keeps_domains_pending() {
+    fn imports_and_replays_dataset_without_live_api_and_keeps_domains_pending() {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-apify-cache-replay-test.duckdb");
+        let source_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-apify-dataset-export-test.json");
         let cache_path =
             std::env::temp_dir().join("ai-agent-trend-radar-apify-cache-replay-test.json");
         cleanup_test_file(&database_path);
+        cleanup_test_file(&source_path);
         cleanup_test_file(&cache_path);
         std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
 
-        let cache = ApifyDatasetCache {
-            cached_at_epoch_seconds: unix_timestamp_seconds(),
-            actor_id: "test/actor".to_string(),
-            actor_run_id: "cached-run-1".to_string(),
-            items: vec![
-                serde_json::json!({
-                    "post_code": "cached-claude-code",
-                    "text_content": "Claude Code is useful for agent workflows.",
-                    "search_keyword": "Claude Code",
-                    "post_url": "https://threads.net/t/cached-claude-code",
-                    "created_at": "2026-08-10T09:00:00Z"
-                }),
-                serde_json::json!({
-                    "post_code": "cached-folk",
-                    "text_content": "Introducing the most powerful personal AI agent. folk.com",
-                    "search_keyword": "AI Agent",
-                    "post_url": "https://threads.net/t/cached-folk",
-                    "created_at": "2026-08-10T10:00:00Z"
-                }),
-                serde_json::json!({
-                    "post_code": "cached-role",
-                    "text_content": "Start paying attention to AI Agent Engineer roles.",
-                    "search_keyword": "AI Agent",
-                    "post_url": "https://threads.net/t/cached-role",
-                    "created_at": "2026-08-10T11:00:00Z"
-                }),
-                serde_json::json!({
-                    "post_code": "cached-copilots",
-                    "text_content": "Copilots suggest code while autonomous AI agents plan work.",
-                    "search_keyword": "AI Agent",
-                    "post_url": "https://threads.net/t/cached-copilots",
-                    "created_at": "2026-08-10T12:00:00Z"
-                }),
-                serde_json::json!({
-                    "post_code": "cached-youtube",
-                    "text_content": "Need an MCP server connector for YouTube.",
-                    "search_keyword": "MCP server",
-                    "post_url": "https://threads.net/t/cached-youtube",
-                    "created_at": "2026-08-10T13:00:00Z"
-                }),
-            ],
-        };
-        write_apify_cache_at(&cache_path, &cache).expect("test cache should write");
+        let exported_items = vec![
+            serde_json::json!({
+                "post_code": "cached-claude-code",
+                "text_content": "Claude Code is useful for agent workflows.",
+                "search_keyword": "Claude Code",
+                "post_url": "https://threads.net/t/cached-claude-code",
+                "created_at": "2026-08-10T09:00:00Z"
+            }),
+            serde_json::json!({
+                "post_code": "cached-folk",
+                "text_content": "Introducing the most powerful personal AI agent. folk.com",
+                "search_keyword": "AI Agent",
+                "post_url": "https://threads.net/t/cached-folk",
+                "created_at": "2026-08-10T10:00:00Z"
+            }),
+            serde_json::json!({
+                "post_code": "cached-role",
+                "text_content": "Start paying attention to AI Agent Engineer roles.",
+                "search_keyword": "AI Agent",
+                "post_url": "https://threads.net/t/cached-role",
+                "created_at": "2026-08-10T11:00:00Z"
+            }),
+            serde_json::json!({
+                "post_code": "cached-copilots",
+                "text_content": "Copilots suggest code while autonomous AI agents plan work.",
+                "search_keyword": "AI Agent",
+                "post_url": "https://threads.net/t/cached-copilots",
+                "created_at": "2026-08-10T12:00:00Z"
+            }),
+            serde_json::json!({
+                "post_code": "cached-youtube",
+                "text_content": "Need an MCP server connector for YouTube.",
+                "search_keyword": "MCP server",
+                "post_url": "https://threads.net/t/cached-youtube",
+                "created_at": "2026-08-10T13:00:00Z"
+            }),
+        ];
+        fs::write(
+            &source_path,
+            serde_json::to_vec_pretty(&exported_items).expect("test dataset should serialize"),
+        )
+        .expect("test exported dataset should write");
+
+        let imported = import_apify_dataset_cache_at(&source_path, &cache_path)
+            .expect("exported dataset should import");
+        assert_eq!(imported.imported_count, 5);
+        assert_eq!(imported.cache_path, cache_path.display().to_string());
+        let imported_cache = read_apify_cache_at(&cache_path).expect("imported cache should read");
+        assert_eq!(imported_cache.actor_id, "manual_import");
+        assert_eq!(imported_cache.items.len(), 5);
 
         let replay = replay_apify_cache_at(&cache_path).expect("cache replay should succeed");
         assert_eq!(replay.mode, APIFY_REPLAY_SOURCE_TYPE);
@@ -882,9 +982,49 @@ mod tests {
             .iter()
             .any(|metric| metric.agent_name == "folk.com"));
 
+        cleanup_test_file(&source_path);
         cleanup_test_file(&cache_path);
         cleanup_test_file(&database_path);
         cleanup_test_file(&PathBuf::from(format!("{}.wal", database_path.display())));
+    }
+
+    #[test]
+    fn rejects_missing_invalid_empty_and_unsupported_dataset_imports() {
+        let source_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-apify-invalid-import-test.json");
+        let cache_path =
+            std::env::temp_dir().join("ai-agent-trend-radar-apify-invalid-cache-test.json");
+        cleanup_test_file(&source_path);
+        cleanup_test_file(&cache_path);
+
+        let missing_error = import_apify_dataset_cache_at(&source_path, &cache_path)
+            .expect_err("missing dataset should fail");
+        assert!(missing_error.contains("file was not found"));
+
+        fs::write(&source_path, b"not valid json").expect("invalid fixture should write");
+        let invalid_error = import_apify_dataset_cache_at(&source_path, &cache_path)
+            .expect_err("invalid JSON should fail");
+        assert!(invalid_error.contains("Invalid Apify dataset JSON"));
+
+        fs::write(&source_path, b"[]").expect("empty fixture should write");
+        let empty_error = import_apify_dataset_cache_at(&source_path, &cache_path)
+            .expect_err("empty dataset should fail");
+        assert_eq!(empty_error, "Apify dataset is empty.");
+
+        fs::write(&source_path, br#"{"items": []}"#)
+            .expect("unsupported root fixture should write");
+        let root_error = import_apify_dataset_cache_at(&source_path, &cache_path)
+            .expect_err("object root should fail");
+        assert!(root_error.contains("expected a JSON array"));
+
+        fs::write(&source_path, br#"[{"post_code":"missing-text"}]"#)
+            .expect("unsupported item fixture should write");
+        let item_error = import_apify_dataset_cache_at(&source_path, &cache_path)
+            .expect_err("item without text should fail");
+        assert!(item_error.contains("text_content must be a string"));
+
+        cleanup_test_file(&source_path);
+        cleanup_test_file(&cache_path);
     }
 
     fn cleanup_test_file(path: &Path) {

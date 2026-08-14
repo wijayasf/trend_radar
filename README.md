@@ -162,6 +162,8 @@ The fallback stores the Apify token in backend environment variables only and la
 
 Each Discovery Crawl sends the complete seed list to one actor request through the actor's `keywords` array. A successful live result is cached at `data/cache/apify-last-run.json`, which is ignored by Git. `Reprocess Last Apify Result` runs the current gate and persistence logic against that cache without calling Apify. Stale caches remain replayable and show an age warning based on `APIFY_CACHE_TTL_HOURS`.
 
+An exported Apify dataset can also be loaded without a live actor run. Select the Apify source, enter the absolute path or a project-root-relative path to the exported JSON array, and use `Import Apify Dataset JSON`. The import validates the dataset and replaces the ignored local cache; it does not call Apify or process posts automatically. Use `Reprocess Last Apify Result` afterward to apply the current entity gate and save eligible posts locally.
+
 Budget guardrails use `APIFY_LIVE_CRAWL_ENABLED=false` by default and limit live calls with `APIFY_MAX_LIVE_RUNS_PER_SESSION=1`. The single-seed Apify test is a live debug action, consumes usage, and counts toward the same session limit.
 
 Domain-shaped names require nearby launch/identity language plus AI product context before they can enter Candidate Review. They remain pending and excluded from weekly rankings until explicitly approved.
