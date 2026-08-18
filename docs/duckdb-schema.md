@@ -9,6 +9,11 @@ This is the MVP local storage boundary for AI Agent Trend Radar. It is intention
 - `agent_mentions` stores normalized AI agent/tool mentions detected inside raw posts.
 - `entity_review_decisions` stores durable approve/ignore decisions for unknown candidates.
 - `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
+- `canonical_entities` stores opaque, source-independent AI technology identities.
+- `source_collection_runs` stores bounded external-source collection attempts.
+- `source_records` stores durable external objects outside the Threads post model.
+- `source_observations` stores append-oriented historical snapshots of source records.
+- `source_record_entity_links` stores reviewed many-to-many relationships between external records and canonical entities.
 
 No Threads access token, API key, or app secret should ever be stored in DuckDB.
 
@@ -147,9 +152,77 @@ mentions * 10
 
 The score formula should move to `config/scoring.yml` when the ranking design stabilizes.
 
+## Multi-Source Foundation
+
+The Phase A multi-source tables are additive. They do not replace `threads_posts_raw`, add canonical IDs to `agent_mentions`, or change weekly aggregation.
+
+### canonical_entities
+
+Source-independent identities for tools, frameworks, skills, protocols, connectors, registries, and app builders.
+
+- Primary key: opaque DuckDB `UUID` in `entity_id`.
+- `canonical_name`: current display name.
+- `normalized_name`: lookup aid only; it is intentionally not unique.
+- `primary_type`: controlled type such as `agent_tool`, `framework_sdk`, or `skill_mode`.
+- `status`: `active` or `archived`.
+- Optional descriptive metadata: description, primary website, and primary repository.
+
+Two distinct entities may have the same normalized display name. Identity must never be inferred from this field alone.
+
+### source_collection_runs
+
+One bounded attempt to observe an external source.
+
+- Primary key: `collection_run_id` UUID.
+- Controlled source values are validated in Rust rather than by a database constraint.
+- Modes: `scheduled`, `manual`, `import`, or `replay`.
+- Statuses: `running`, `completed`, `partial`, or `failed`.
+- `scope_json` describes the requested surface/window without coupling schema to one source.
+- `records_seen` and `observations_saved` update transactionally with successful observation inserts.
+
+A missing observation means only “not observed.” A failed or partial run must not imply confirmed absence.
+
+### source_records
+
+A durable object on an external ecosystem source, such as an ExplainX profile or GitHub repository.
+
+- Primary key: `source_record_id` UUID.
+- Unique external identity: `(source, source_record_key)`.
+- `resolution_state`: `single_entity`, `multiple_entities`, `no_product_entity`, or `unresolved`.
+- Mutable descriptive metadata is updated during upsert while `first_seen_at` remains stable and `last_seen_at` advances.
+- Source-specific metadata remains optional JSON text.
+
+Source records remain separate from canonical entities. ExplainX or future ecosystem records must not be inserted into `threads_posts_raw`.
+
+### source_observations
+
+Append-oriented snapshots of a source record during a collection run.
+
+- Primary key: `observation_id` UUID.
+- Foreign keys reference `source_collection_runs` and `source_records`.
+- Common nullable metrics include rank, source score, views, installs, GitHub stars, and upvotes.
+- `source_payload_json` preserves the complete source-specific observation payload.
+- Same-run duplicate protection uses `(collection_run_id, source_record_id, surface, observation_kind, time_window)`.
+
+The same record and payload may appear in different runs; those rows are valid historical observations and are not deduplicated across runs.
+
+### source_record_entity_links
+
+Reviewed many-to-many relationships between external records and canonical entities.
+
+- Primary key: `link_id` UUID.
+- Unique pair: `(source_record_id, entity_id)`.
+- Relationship types: `same_entity`, `child_resource`, `related_entity`, or `mentioned_entity`.
+- Review states: `pending`, `approved`, `rejected`, or `ambiguous`.
+- Match confidence is diagnostic only and never causes automatic approval.
+- Optional `evidence_json` preserves resolution evidence.
+
+Service-level validation allows no-product and unresolved records while preventing an approved link from being attached to a record currently classified as `no_product_entity`.
+
 ## Assumptions
 
 - Raw, normalized, and aggregated data stay separate for auditability.
+- External source records, observations, and canonical identities remain separate from social post storage.
 - Schema initialization uses `CREATE TABLE IF NOT EXISTS` for MVP.
 - Schema initialization uses additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migrations. If a real legacy `agent_mentions_compatible` table or view is present, initialization removes that compatibility object before applying the current schema.
 - Phantom compatibility metadata that DuckDB does not expose as a real object is never repaired by deleting the database automatically. Local demo reset returns a friendly local-only cleanup instruction instead.

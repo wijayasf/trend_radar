@@ -312,6 +312,158 @@ CREATE INDEX IF NOT EXISTS idx_weekly_agent_metrics_region_score
     ON weekly_agent_metrics(region, trend_score);
 "#;
 
+const MULTI_SOURCE_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS canonical_entities (
+    entity_id UUID PRIMARY KEY DEFAULT uuid(),
+    canonical_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    primary_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    description TEXT,
+    primary_website TEXT,
+    primary_repository TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('active', 'archived')),
+    CHECK (primary_type IN (
+        'agent_tool',
+        'framework_sdk',
+        'skill_mode',
+        'protocol',
+        'connector_plugin',
+        'registry_discovery',
+        'app_builder',
+        'other'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS source_collection_runs (
+    collection_run_id UUID PRIMARY KEY DEFAULT uuid(),
+    source TEXT NOT NULL,
+    collection_mode TEXT NOT NULL,
+    scope_json TEXT,
+    started_at TIMESTAMP NOT NULL,
+    finished_at TIMESTAMP,
+    status TEXT NOT NULL,
+    records_seen BIGINT NOT NULL DEFAULT 0,
+    observations_saved BIGINT NOT NULL DEFAULT 0,
+    error_summary TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('running', 'completed', 'partial', 'failed')),
+    CHECK (collection_mode IN ('scheduled', 'manual', 'import', 'replay'))
+);
+
+CREATE TABLE IF NOT EXISTS source_records (
+    source_record_id UUID PRIMARY KEY DEFAULT uuid(),
+    source TEXT NOT NULL,
+    source_record_key TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    resolution_state TEXT NOT NULL DEFAULT 'unresolved',
+    title TEXT,
+    external_url TEXT,
+    publisher TEXT,
+    description TEXT,
+    source_category TEXT,
+    repository_url TEXT,
+    published_at TIMESTAMP,
+    listed_at TIMESTAMP,
+    metadata_json TEXT,
+    first_seen_at TIMESTAMP NOT NULL,
+    last_seen_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source, source_record_key),
+    CHECK (resolution_state IN (
+        'single_entity',
+        'multiple_entities',
+        'no_product_entity',
+        'unresolved'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS source_observations (
+    observation_id UUID PRIMARY KEY DEFAULT uuid(),
+    collection_run_id UUID NOT NULL,
+    source_record_id UUID NOT NULL,
+    observed_at TIMESTAMP NOT NULL,
+    surface TEXT NOT NULL DEFAULT 'record',
+    observation_kind TEXT NOT NULL,
+    time_window TEXT NOT NULL DEFAULT 'none',
+    rank BIGINT,
+    source_score DOUBLE,
+    views BIGINT,
+    installs_total BIGINT,
+    installs_period BIGINT,
+    github_stars BIGINT,
+    upvotes BIGINT,
+    payload_hash TEXT,
+    source_payload_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (collection_run_id)
+        REFERENCES source_collection_runs(collection_run_id),
+    FOREIGN KEY (source_record_id)
+        REFERENCES source_records(source_record_id),
+    UNIQUE (
+        collection_run_id,
+        source_record_id,
+        surface,
+        observation_kind,
+        time_window
+    ),
+    CHECK (rank IS NULL OR rank > 0),
+    CHECK (views IS NULL OR views >= 0),
+    CHECK (installs_total IS NULL OR installs_total >= 0),
+    CHECK (installs_period IS NULL OR installs_period >= 0),
+    CHECK (github_stars IS NULL OR github_stars >= 0),
+    CHECK (upvotes IS NULL OR upvotes >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS source_record_entity_links (
+    link_id UUID PRIMARY KEY DEFAULT uuid(),
+    source_record_id UUID NOT NULL,
+    entity_id UUID NOT NULL,
+    relationship_type TEXT NOT NULL,
+    match_method TEXT NOT NULL,
+    match_confidence DOUBLE,
+    review_state TEXT NOT NULL DEFAULT 'pending',
+    evidence_json TEXT,
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_record_id)
+        REFERENCES source_records(source_record_id),
+    FOREIGN KEY (entity_id)
+        REFERENCES canonical_entities(entity_id),
+    UNIQUE (source_record_id, entity_id),
+    CHECK (relationship_type IN (
+        'same_entity',
+        'child_resource',
+        'related_entity',
+        'mentioned_entity'
+    )),
+    CHECK (review_state IN ('pending', 'approved', 'rejected', 'ambiguous')),
+    CHECK (
+        match_confidence IS NULL
+        OR (match_confidence >= 0.0 AND match_confidence <= 1.0)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_canonical_entities_normalized_name
+    ON canonical_entities(normalized_name);
+
+CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_started
+    ON source_collection_runs(source, started_at);
+
+CREATE INDEX IF NOT EXISTS idx_source_records_source_type
+    ON source_records(source, record_type);
+
+CREATE INDEX IF NOT EXISTS idx_source_observations_record_time
+    ON source_observations(source_record_id, observed_at);
+
+CREATE INDEX IF NOT EXISTS idx_source_entity_links_entity
+    ON source_record_entity_links(entity_id, review_state);
+"#;
+
 const LEGACY_COMPATIBILITY_OBJECT: &str = "agent_mentions_compatible";
 const LEGACY_LOCAL_DATABASE_MESSAGE: &str = "Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.";
 
@@ -1593,7 +1745,7 @@ pub fn load_weekly_agent_metrics(limit: usize) -> Result<Vec<WeeklyAgentMetric>,
     Ok(metrics)
 }
 
-fn initialize_database_at(database_path: &Path) -> Result<(), String> {
+pub(crate) fn initialize_database_at(database_path: &Path) -> Result<(), String> {
     ensure_parent_directory(database_path)?;
     let connection = open_connection(database_path)?;
     remove_legacy_compatibility_object(&connection)?;
@@ -1777,7 +1929,19 @@ fn normalize_optional_note(note: Option<String>) -> Option<String> {
 fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))
+        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(MULTI_SOURCE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB multi-source schema initialization failed: {error}"))
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_legacy_schema_at(database_path: &Path) -> Result<(), String> {
+    ensure_parent_directory(database_path)?;
+    let connection = open_connection(database_path)?;
+    connection
+        .execute_batch(SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB legacy test schema initialization failed: {error}"))
 }
 
 fn open_connection(database_path: &Path) -> Result<Connection, String> {
