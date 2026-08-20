@@ -4,6 +4,8 @@ Date: 2026-08-20
 Agent: Codex
 Branch: `feature/external-identity-review-ui`
 Base checkpoint: `3d2ee61 ci: add validation workflow`
+Feature commit: `c81755e feat: add external identity review UI`
+Draft PR: https://github.com/wijayasf/trend_radar/pull/2
 
 ## Objective
 
@@ -44,7 +46,7 @@ Add IMP-06 explicit review commands and desktop UI for pending ExplainX source/e
 
 ## Recommended Next Step
 
-Commit this stacked branch, push it, and open a draft PR based on `feature/entity-identity-persistence`. Keep PR #1 draft and do not merge either branch.
+Review PR #2 as a stacked draft against `feature/entity-identity-persistence`. Keep PR #1 and PR #2 draft, and do not merge either branch until the identity foundation checkpoint is accepted.
 
 ## Token Usage
 

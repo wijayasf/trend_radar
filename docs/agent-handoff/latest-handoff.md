@@ -6,7 +6,7 @@ Agent: Codex
 
 ## Current State
 
-IMP-06 is implemented on stacked branch `feature/external-identity-review-ui`, based on checkpoint `3d2ee61` from `feature/entity-identity-persistence`. PR #1 remains untouched, open, and draft. No merge occurred.
+IMP-06 is implemented and pushed on stacked branch `feature/external-identity-review-ui`, based on checkpoint `3d2ee61` from `feature/entity-identity-persistence`. Feature commit `c81755e` is under draft review at https://github.com/wijayasf/trend_radar/pull/2. PR #1 remains untouched, open, and draft. No merge occurred.
 
 ## Key Changes
 
@@ -26,8 +26,8 @@ IMP-06 is implemented on stacked branch `feature/external-identity-review-ui`, b
 
 ## Pending
 
-- Commit as `feat: add external identity review UI` and push only the stacked feature branch.
-- Optionally open a draft stacked PR targeting `feature/entity-identity-persistence` after push.
+- Review the stacked PR #2 and its CI checks.
+- Keep PR #1 and PR #2 draft; do not merge or begin scoring/momentum work yet.
 
 ## Risk Note
 
