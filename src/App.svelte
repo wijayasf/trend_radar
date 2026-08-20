@@ -161,6 +161,17 @@
   let topGlobal: WeeklyAgentMetric[] = [];
   let topUnknown: WeeklyAgentMetric[] = [];
   let isAggregatingWeeklyMetrics = false;
+  let canonicalWeeklyStatus = 'Idle';
+  let canonicalWeeklyRows = 0;
+  let canonicalResolvedEntities = 0;
+  let canonicalUnresolvedSkipped = 0;
+  let canonicalAmbiguousSkipped = 0;
+  let canonicalMissingAliasSkipped = 0;
+  let canonicalSkippedMentions = 0;
+  let canonicalTopIndonesia: WeeklyEntityMetric[] = [];
+  let canonicalTopGlobal: WeeklyEntityMetric[] = [];
+  let canonicalWeeklyErrors: string[] = [];
+  let isAggregatingCanonicalWeeklyMetrics = false;
   let markdownExportStatus = 'Idle';
   let csvExportStatus = 'Idle';
   let markdownExportPath = '';
@@ -411,6 +422,43 @@
     top_indonesia: WeeklyAgentMetric[];
     top_global: WeeklyAgentMetric[];
     top_unknown: WeeklyAgentMetric[];
+    message: string;
+  };
+
+  type WeeklyEntityMetric = {
+    rank: number;
+    id: string;
+    week_start: string;
+    week_end: string;
+    entity_id: string;
+    canonical_name: string;
+    entity_type: string;
+    region: string;
+    mention_count: number;
+    positive_count: number;
+    neutral_count: number;
+    negative_count: number;
+    mixed_count: number;
+    cost_positive_count: number;
+    cost_negative_boros_count: number;
+    cost_mixed_count: number;
+    cost_not_mentioned_count: number;
+    source_count: number;
+    first_seen_at: string;
+    last_seen_at: string;
+    trend_score: number;
+  };
+
+  type WeeklyEntityAggregationResult = {
+    canonical_rows_generated: number;
+    resolved_entities_included: number;
+    unresolved_mentions_skipped: number;
+    ambiguous_mentions_skipped: number;
+    missing_alias_mentions_skipped: number;
+    skipped_mentions_skipped: number;
+    top_indonesia: WeeklyEntityMetric[];
+    top_global: WeeklyEntityMetric[];
+    errors: string[];
     message: string;
   };
 
@@ -739,6 +787,16 @@
       topIndonesia = [];
       topGlobal = [];
       topUnknown = [];
+      canonicalWeeklyStatus = 'Idle';
+      canonicalWeeklyRows = 0;
+      canonicalResolvedEntities = 0;
+      canonicalUnresolvedSkipped = 0;
+      canonicalAmbiguousSkipped = 0;
+      canonicalMissingAliasSkipped = 0;
+      canonicalSkippedMentions = 0;
+      canonicalTopIndonesia = [];
+      canonicalTopGlobal = [];
+      canonicalWeeklyErrors = [];
       resetDiscoveryDiagnostics();
       await loadCandidateEntities();
     } catch (error) {
@@ -1272,6 +1330,42 @@
       weeklyStatus = `error: ${friendlyError(error)}`;
     } finally {
       isAggregatingWeeklyMetrics = false;
+    }
+  }
+
+  async function aggregateCanonicalWeeklyMetrics() {
+    if (isAggregatingCanonicalWeeklyMetrics) return;
+
+    isAggregatingCanonicalWeeklyMetrics = true;
+    canonicalWeeklyStatus = 'Aggregating canonical weekly metrics...';
+    canonicalWeeklyRows = 0;
+    canonicalResolvedEntities = 0;
+    canonicalUnresolvedSkipped = 0;
+    canonicalAmbiguousSkipped = 0;
+    canonicalMissingAliasSkipped = 0;
+    canonicalSkippedMentions = 0;
+    canonicalTopIndonesia = [];
+    canonicalTopGlobal = [];
+    canonicalWeeklyErrors = [];
+
+    try {
+      const result = await invoke<WeeklyEntityAggregationResult>(
+        'aggregate_weekly_entity_metrics',
+      );
+      canonicalWeeklyRows = result.canonical_rows_generated;
+      canonicalResolvedEntities = result.resolved_entities_included;
+      canonicalUnresolvedSkipped = result.unresolved_mentions_skipped;
+      canonicalAmbiguousSkipped = result.ambiguous_mentions_skipped;
+      canonicalMissingAliasSkipped = result.missing_alias_mentions_skipped;
+      canonicalSkippedMentions = result.skipped_mentions_skipped;
+      canonicalTopIndonesia = result.top_indonesia;
+      canonicalTopGlobal = result.top_global;
+      canonicalWeeklyErrors = result.errors;
+      canonicalWeeklyStatus = result.message;
+    } catch (error) {
+      canonicalWeeklyStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isAggregatingCanonicalWeeklyMetrics = false;
     }
   }
 
@@ -2232,6 +2326,54 @@
       </div>
     </section>
 
+    <section class="detector-panel" aria-label="Canonical weekly metrics">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">5. Canonical Weekly Metrics</p>
+          <h2>Aggregate Canonical Weekly Metrics</h2>
+          <p class="panel-note">
+            Roll resolved aliases into one canonical entity row per week and region. Ambiguous or
+            unresolved mentions remain excluded.
+          </p>
+        </div>
+        <button
+          type="button"
+          on:click={aggregateCanonicalWeeklyMetrics}
+          disabled={isAggregatingCanonicalWeeklyMetrics || isFullFlowRunning()}
+        >
+          {#if isAggregatingCanonicalWeeklyMetrics}
+            {@render LoadingLabel('Aggregating...')}
+          {:else}
+            Aggregate Canonical Weekly Metrics
+          {/if}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {canonicalWeeklyStatus}</span>
+        <span>Canonical rows: {canonicalWeeklyRows}</span>
+        <span>Resolved entities: {canonicalResolvedEntities}</span>
+        <span>Unresolved skipped: {canonicalUnresolvedSkipped}</span>
+        <span>Missing alias skipped: {canonicalMissingAliasSkipped}</span>
+        <span>Ambiguous skipped: {canonicalAmbiguousSkipped}</span>
+        <span>Other skipped: {canonicalSkippedMentions}</span>
+        {#if canonicalWeeklyErrors.length > 0}
+          <span>Errors: {canonicalWeeklyErrors.join(' | ')}</span>
+        {/if}
+      </div>
+
+      <div class="metrics-groups">
+        <div>
+          <h3>Top Indonesia</h3>
+          {@render CanonicalMetricTable(canonicalTopIndonesia)}
+        </div>
+        <div>
+          <h3>Top Global</h3>
+          {@render CanonicalMetricTable(canonicalTopGlobal)}
+        </div>
+      </div>
+    </section>
+
     <section class="detector-panel" aria-label="Report export">
       <div class="detector-header">
         <div>
@@ -2295,6 +2437,51 @@
     <span class="loading-spinner" aria-hidden="true"></span>
     {label}
   </span>
+{/snippet}
+
+{#snippet CanonicalMetricTable(metrics: WeeklyEntityMetric[])}
+  {#if metrics.length > 0}
+    <div class="metrics-table-wrap">
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Canonical entity</th>
+            <th>Type</th>
+            <th>Region</th>
+            <th>Mentions</th>
+            <th>Sentiment + / 0 / - / mixed</th>
+            <th>Cost + / boros / mixed / none</th>
+            <th>Sources</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each metrics as metric}
+            <tr>
+              <td>{metric.rank}</td>
+              <td>{metric.canonical_name}</td>
+              <td>{metric.entity_type}</td>
+              <td>{metric.region}</td>
+              <td>{metric.mention_count}</td>
+              <td>
+                {metric.positive_count} / {metric.neutral_count} / {metric.negative_count} /
+                {metric.mixed_count}
+              </td>
+              <td>
+                {metric.cost_positive_count} / {metric.cost_negative_boros_count} /
+                {metric.cost_mixed_count} / {metric.cost_not_mentioned_count}
+              </td>
+              <td>{metric.source_count}</td>
+              <td>{metric.trend_score.toFixed(1)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <p class="empty-state">No canonical metrics yet.</p>
+  {/if}
 {/snippet}
 
 {#snippet MetricTable(metrics: WeeklyAgentMetric[])}

@@ -12,7 +12,7 @@ use crate::models::entities::{
     SentimentClassification,
 };
 use crate::models::threads::{DiscoveryCrawlResult, ThreadPostRaw};
-use crate::models::trend::WeeklyAgentMetric;
+use crate::models::trend::{IdentityResolutionSkipCounts, WeeklyAgentMetric, WeeklyEntityMetric};
 use crate::utils::config;
 
 const SCHEMA_SQL: &str = r#"
@@ -357,6 +357,39 @@ CREATE TABLE IF NOT EXISTS canonical_entities (
         'other'
     ))
 );
+
+CREATE TABLE IF NOT EXISTS weekly_entity_metrics (
+    id UUID PRIMARY KEY DEFAULT uuid(),
+    week_start DATE NOT NULL,
+    week_end DATE NOT NULL,
+    entity_id UUID NOT NULL,
+    canonical_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    region TEXT NOT NULL,
+    mention_count BIGINT NOT NULL DEFAULT 0,
+    positive_count BIGINT NOT NULL DEFAULT 0,
+    neutral_count BIGINT NOT NULL DEFAULT 0,
+    negative_count BIGINT NOT NULL DEFAULT 0,
+    mixed_count BIGINT NOT NULL DEFAULT 0,
+    cost_positive_count BIGINT NOT NULL DEFAULT 0,
+    cost_negative_boros_count BIGINT NOT NULL DEFAULT 0,
+    cost_mixed_count BIGINT NOT NULL DEFAULT 0,
+    cost_not_mentioned_count BIGINT NOT NULL DEFAULT 0,
+    source_count BIGINT NOT NULL DEFAULT 0,
+    first_seen_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
+    trend_score DOUBLE NOT NULL DEFAULT 0.0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (week_start, entity_id, region),
+    CHECK (region IN ('indonesia', 'global', 'unknown'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_entity_metrics_region_score
+    ON weekly_entity_metrics(week_start, region, trend_score);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_entity_metrics_entity
+    ON weekly_entity_metrics(entity_id, week_start);
 
 CREATE TABLE IF NOT EXISTS source_collection_runs (
     collection_run_id UUID PRIMARY KEY DEFAULT uuid(),
@@ -876,6 +909,99 @@ SELECT
 FROM grouped;
 "#;
 
+const WEEKLY_ENTITY_METRICS_INSERT_SQL: &str = r#"
+INSERT INTO weekly_entity_metrics (
+    week_start,
+    week_end,
+    entity_id,
+    canonical_name,
+    entity_type,
+    region,
+    mention_count,
+    positive_count,
+    neutral_count,
+    negative_count,
+    mixed_count,
+    cost_positive_count,
+    cost_negative_boros_count,
+    cost_mixed_count,
+    cost_not_mentioned_count,
+    source_count,
+    first_seen_at,
+    last_seen_at,
+    trend_score
+)
+WITH base AS (
+    SELECT
+        CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)
+            - CAST(((EXTRACT(dow FROM CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)) + 6) % 7) AS INTEGER)
+            AS week_start,
+        m.entity_id,
+        entities.canonical_name,
+        entities.primary_type AS entity_type,
+        COALESCE(m.region, 'unknown') AS region,
+        COALESCE(m.sentiment, 'unknown') AS sentiment,
+        COALESCE(m.cost_signal, 'not_mentioned') AS cost_signal,
+        COALESCE(NULLIF(trim(p.source_type), ''), 'threads') AS source_name,
+        COALESCE(p.posted_at, p.collected_at) AS observed_at
+    FROM agent_mentions m
+    JOIN threads_posts_raw p ON p.post_id = m.post_id
+    JOIN canonical_entities entities ON entities.entity_id = m.entity_id
+    WHERE m.entity_id IS NOT NULL
+        AND m.identity_resolution_status = 'resolved'
+        AND entities.status = 'active'
+),
+grouped AS (
+    SELECT
+        week_start,
+        CAST(week_start + INTERVAL 6 DAY AS DATE) AS week_end,
+        entity_id,
+        canonical_name,
+        entity_type,
+        region,
+        COUNT(*) AS mention_count,
+        SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive_count,
+        SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) AS neutral_count,
+        SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative_count,
+        SUM(CASE WHEN sentiment = 'mixed' THEN 1 ELSE 0 END) AS mixed_count,
+        SUM(CASE WHEN cost_signal = 'cost_positive' THEN 1 ELSE 0 END) AS cost_positive_count,
+        SUM(CASE WHEN cost_signal = 'cost_negative_boros' THEN 1 ELSE 0 END) AS cost_negative_boros_count,
+        SUM(CASE WHEN cost_signal = 'cost_mixed' THEN 1 ELSE 0 END) AS cost_mixed_count,
+        SUM(CASE WHEN cost_signal IN ('not_mentioned', 'none') THEN 1 ELSE 0 END) AS cost_not_mentioned_count,
+        COUNT(DISTINCT source_name) AS source_count,
+        MIN(observed_at) AS first_seen_at,
+        MAX(observed_at) AS last_seen_at
+    FROM base
+    GROUP BY week_start, week_end, entity_id, canonical_name, entity_type, region
+)
+SELECT
+    week_start,
+    week_end,
+    entity_id,
+    canonical_name,
+    entity_type,
+    region,
+    mention_count,
+    positive_count,
+    neutral_count,
+    negative_count,
+    mixed_count,
+    cost_positive_count,
+    cost_negative_boros_count,
+    cost_mixed_count,
+    cost_not_mentioned_count,
+    source_count,
+    first_seen_at,
+    last_seen_at,
+    -- Keep the existing MVP score unchanged; IMP-04 changes only the grouping identity.
+    (mention_count * 10)
+        + (positive_count * 3)
+        + (mixed_count * 1)
+        - (negative_count * 2)
+        - (cost_negative_boros_count * 1) AS trend_score
+FROM grouped;
+"#;
+
 pub fn configured_database_path() -> Result<PathBuf, String> {
     config::resolved_database_path()
 }
@@ -980,6 +1106,9 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
     connection
         .execute("DELETE FROM weekly_agent_metrics", [])
         .map_err(|error| reset_error("weekly metrics", error))?;
+    connection
+        .execute("DELETE FROM weekly_entity_metrics", [])
+        .map_err(|error| reset_error("canonical weekly metrics", error))?;
     if table_exists(&connection, "crawl_seed_results")? {
         connection
             .execute("DELETE FROM crawl_seed_results", [])
@@ -992,7 +1121,7 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
         .execute("DELETE FROM threads_posts_raw", [])
         .map_err(|error| reset_error("raw post", error))?;
 
-    Ok("Cleared local demo data: raw posts, mentions, crawl runs, and weekly metrics. Candidate decisions were preserved.".to_string())
+    Ok("Cleared local demo data: raw posts, mentions, crawl runs, weekly metrics, and canonical weekly metrics. Candidate decisions were preserved.".to_string())
 }
 
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, String> {
@@ -1788,6 +1917,176 @@ pub fn rebuild_weekly_agent_metrics() -> Result<usize, String> {
 
     usize::try_from(count)
         .map_err(|error| format!("DuckDB weekly metrics count is invalid: {error}"))
+}
+
+pub fn rebuild_weekly_entity_metrics() -> Result<usize, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB canonical weekly transaction failed: {error}"))?;
+
+    transaction
+        .execute("DELETE FROM weekly_entity_metrics", [])
+        .map_err(|error| format!("DuckDB canonical weekly reset failed: {error}"))?;
+    transaction
+        .execute(WEEKLY_ENTITY_METRICS_INSERT_SQL, [])
+        .map_err(|error| format!("DuckDB canonical weekly aggregation failed: {error}"))?;
+    let count: i64 = transaction
+        .query_row("SELECT COUNT(*) FROM weekly_entity_metrics", [], |row| {
+            row.get(0)
+        })
+        .map_err(|error| format!("DuckDB canonical weekly count failed: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB canonical weekly commit failed: {error}"))?;
+
+    usize::try_from(count)
+        .map_err(|error| format!("DuckDB canonical weekly count is invalid: {error}"))
+}
+
+pub fn count_weekly_entity_metric_entities() -> Result<usize, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(DISTINCT entity_id) FROM weekly_entity_metrics",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("DuckDB canonical entity count failed: {error}"))?;
+    usize::try_from(count)
+        .map_err(|error| format!("DuckDB canonical entity count is invalid: {error}"))
+}
+
+pub fn count_identity_resolution_skips() -> Result<IdentityResolutionSkipCounts, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let counts: (i64, i64, i64, i64, i64) = connection
+        .query_row(
+            r#"
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE identity_resolution_status IS NULL
+                        OR identity_resolution_status = 'unresolved'
+                        OR (identity_resolution_status = 'resolved' AND entity_id IS NULL)
+                ),
+                COUNT(*) FILTER (WHERE identity_resolution_status = 'ambiguous'),
+                COUNT(*) FILTER (WHERE identity_resolution_status = 'missing_alias'),
+                COUNT(*) FILTER (WHERE identity_resolution_status = 'skipped'),
+                COUNT(*) FILTER (
+                    WHERE identity_resolution_status = 'resolved'
+                        AND entity_id IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM canonical_entities entities
+                            WHERE entities.entity_id = agent_mentions.entity_id
+                                AND entities.status = 'active'
+                        )
+                )
+            FROM agent_mentions
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(|error| format!("DuckDB identity skip count failed: {error}"))?;
+
+    Ok(IdentityResolutionSkipCounts {
+        unresolved: i64_to_usize(counts.0)
+            .map_err(|error| format!("Invalid unresolved mention count: {error}"))?,
+        ambiguous: i64_to_usize(counts.1)
+            .map_err(|error| format!("Invalid ambiguous mention count: {error}"))?,
+        missing_alias: i64_to_usize(counts.2)
+            .map_err(|error| format!("Invalid missing alias count: {error}"))?,
+        skipped: i64_to_usize(counts.3)
+            .map_err(|error| format!("Invalid skipped mention count: {error}"))?,
+        invalid_resolved: i64_to_usize(counts.4)
+            .map_err(|error| format!("Invalid resolved reference count: {error}"))?,
+    })
+}
+
+pub fn load_weekly_entity_metrics_by_region(
+    region: &str,
+    limit: usize,
+) -> Result<Vec<WeeklyEntityMetric>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                CAST(id AS VARCHAR),
+                CAST(week_start AS VARCHAR),
+                CAST(week_end AS VARCHAR),
+                CAST(entity_id AS VARCHAR),
+                canonical_name,
+                entity_type,
+                region,
+                mention_count,
+                positive_count,
+                neutral_count,
+                negative_count,
+                mixed_count,
+                cost_positive_count,
+                cost_negative_boros_count,
+                cost_mixed_count,
+                cost_not_mentioned_count,
+                source_count,
+                CAST(first_seen_at AS VARCHAR),
+                CAST(last_seen_at AS VARCHAR),
+                trend_score
+            FROM weekly_entity_metrics
+            WHERE region = ?1
+                AND week_start = (SELECT MAX(week_start) FROM weekly_entity_metrics)
+            ORDER BY trend_score DESC, mention_count DESC, canonical_name ASC
+            LIMIT ?2
+            "#,
+        )
+        .map_err(|error| format!("DuckDB canonical weekly query preparation failed: {error}"))?;
+    let rows = statement
+        .query_map(params![region, limit], |row| {
+            Ok(WeeklyEntityMetric {
+                rank: 0,
+                id: row.get(0)?,
+                week_start: row.get(1)?,
+                week_end: row.get(2)?,
+                entity_id: row.get(3)?,
+                canonical_name: row.get(4)?,
+                entity_type: row.get(5)?,
+                region: row.get(6)?,
+                mention_count: i64_to_usize(row.get(7)?)?,
+                positive_count: i64_to_usize(row.get(8)?)?,
+                neutral_count: i64_to_usize(row.get(9)?)?,
+                negative_count: i64_to_usize(row.get(10)?)?,
+                mixed_count: i64_to_usize(row.get(11)?)?,
+                cost_positive_count: i64_to_usize(row.get(12)?)?,
+                cost_negative_boros_count: i64_to_usize(row.get(13)?)?,
+                cost_mixed_count: i64_to_usize(row.get(14)?)?,
+                cost_not_mentioned_count: i64_to_usize(row.get(15)?)?,
+                source_count: i64_to_usize(row.get(16)?)?,
+                first_seen_at: row.get(17)?,
+                last_seen_at: row.get(18)?,
+                trend_score: row.get(19)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB canonical weekly query failed: {error}"))?;
+
+    let mut metrics = Vec::new();
+    for row in rows {
+        let mut metric =
+            row.map_err(|error| format!("DuckDB canonical weekly row read failed: {error}"))?;
+        metric.rank = metrics.len() + 1;
+        metrics.push(metric);
+    }
+    Ok(metrics)
 }
 
 pub fn load_weekly_agent_metrics_by_region(

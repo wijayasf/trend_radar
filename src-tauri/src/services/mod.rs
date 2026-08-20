@@ -1,5 +1,6 @@
 pub mod apify_connector;
 pub mod candidate_review;
+pub mod canonical_weekly_aggregator;
 pub mod cost_classifier;
 pub mod discovery_crawler;
 pub mod duckdb_service;

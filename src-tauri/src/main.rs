@@ -31,6 +31,7 @@ fn main() {
             commands::sentiments::classify_sentiments,
             commands::costs::classify_cost_signals,
             commands::weekly::aggregate_weekly_metrics,
+            commands::weekly::aggregate_weekly_entity_metrics,
             commands::reports::export_weekly_report_markdown,
             commands::reports::export_weekly_metrics_csv
         ])

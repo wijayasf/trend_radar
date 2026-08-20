@@ -9,6 +9,7 @@ This is the MVP local storage boundary for AI Agent Trend Radar. It is intention
 - `agent_mentions` stores normalized AI agent/tool mentions and optional canonical identity linkage.
 - `entity_review_decisions` stores durable approve/ignore decisions for unknown candidates.
 - `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
+- `weekly_entity_metrics` stores canonical UUID-based weekly aggregates for resolved mentions.
 - `canonical_entities` stores opaque, source-independent AI technology identities.
 - `source_collection_runs` stores bounded external-source collection attempts.
 - `source_records` stores durable external objects outside the Threads post model.
@@ -157,6 +158,28 @@ mentions * 10
 
 The score formula should move to `config/scoring.yml` when the ranking design stabilizes.
 
+### weekly_entity_metrics
+
+Canonical weekly reporting table introduced by IMP-04. This table is additive and does not replace or rewrite `weekly_agent_metrics`.
+
+- Primary key: opaque UUID in `id`.
+- Unique canonical bucket: `(week_start, entity_id, region)`.
+- `entity_id`: Resolved canonical UUID validated through the IMP-03 linkage service. No DuckDB foreign key is used so canonical metadata updates remain compatible with DuckDB limitations.
+- `canonical_name` and `entity_type`: Canonical metadata snapshots used for readable rankings.
+- `week_start` and `week_end`: Monday-to-Sunday reporting bucket, matching the existing weekly aggregation.
+- `region`: `indonesia`, `global`, or `unknown` from the existing mention classifier output.
+- `mention_count`: Total resolved mentions for the canonical entity, region, and week.
+- Sentiment counts: positive, neutral, negative, and mixed.
+- Cost counts: cost positive, cost negative/boros, cost mixed, and not mentioned.
+- `source_count`: Distinct raw-post `source_type` values in the bucket, defaulting to `threads` when source metadata is absent.
+- `first_seen_at` and `last_seen_at`: Earliest and latest source-post timestamps in the bucket.
+- `trend_score`: Existing MVP formula applied without weight changes.
+- `created_at` and `updated_at`: Local derived-row timestamps.
+
+Canonical aggregation includes only mentions where `entity_id` is present, `identity_resolution_status = resolved`, and the referenced canonical entity is active. Null/unresolved, ambiguous, missing-alias, skipped, archived, and invalid canonical references are excluded rather than guessed. The command reports these exclusions separately.
+
+Rebuild is idempotent and transactional: existing derived canonical rows are deleted and all eligible weeks are inserted in one transaction. A failed insert rolls back to the previous derived state. Dashboard loaders rank only the maximum available week per requested region, matching the legacy dashboard convention.
+
 ## Multi-Source Foundation
 
 The Phase A multi-source tables are additive. They do not replace `threads_posts_raw` or change weekly aggregation. IMP-03 adds optional canonical IDs to `agent_mentions` while preserving its original string fields.
@@ -281,4 +304,4 @@ DuckDB currently rejects updates to a parent row referenced by a foreign key, ev
 - The Apify connector is an experimental fallback. Its extra source metadata is additive and should be reviewed for compliance before production use.
 - Apify applies an entity-first gate before raw storage. Generic AI/MCP context is not sufficient; a known concrete alias or strict product-like unknown candidate must be detected. Recruitment/job posts are filtered unless a concrete named entity is present.
 - Apify enforces the actor's minimum of 10 max posts. Its synchronous run timeout defaults to 300 seconds and is configurable with `APIFY_RUN_TIMEOUT_SECONDS` within a 30-900 second bound.
-- Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.
+- Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `weekly_entity_metrics`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.

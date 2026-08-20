@@ -3031,6 +3031,7 @@ mod tests {
             "agent_mentions",
             "entity_review_decisions",
             "weekly_agent_metrics",
+            "weekly_entity_metrics",
             "canonical_entities",
             "source_collection_runs",
             "source_records",
