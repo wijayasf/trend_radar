@@ -1,38 +1,38 @@
 # Latest Handoff
 
 Date: 2026-08-20
-Session: 048-pr-1-self-review
+Session: 049-github-actions-validation
 Agent: Codex
 
 ## Current State
 
-PR #1 is open and draft at https://github.com/wijayasf/trend_radar/pull/1 from `feature/entity-identity-persistence` to `main`. The branch contains IMP-01 through IMP-05, ending at `03a338f`, and passed a review-only self-assessment with conclusion `APPROVE AS DRAFT CHECKPOINT`. No application code changed, no merge occurred, and IMP-06 was not started.
+PR #1 is open and draft at https://github.com/wijayasf/trend_radar/pull/1 from `feature/entity-identity-persistence` to `main`. CI-01 adds GitHub Actions validation for the existing frontend, Rust, and security gates without changing application logic. No merge occurred and IMP-06 was not started.
 
 ## Key Changes
 
-- Reviewed all 30 PR files and five commits against current `origin/main`.
-- Confirmed additive schema initialization, nullable mention identity linkage, separate legacy/canonical weekly metrics, and no new destructive migration.
-- Confirmed Candidate Review and External Identity Review remain separate, external reviews are append-only, and conservative ExplainX candidates remain pending or unlinked.
-- Confirmed the PR does not implement live ExplainX collection, fuzzy/LLM merging, cross-source scoring, momentum, Programming Fit, IMP-06, or a merge.
-- Added the detailed self-review at `docs/agent-progress/2026-08-20-session-048-pr-1-self-review.md`.
+- Added `.github/workflows/ci.yml` with frontend, Rust, and tracked-secret-scan jobs.
+- Frontend uses Node.js 22, `npm ci`, and `npm run build`.
+- Rust uses stable Rust, Tauri 2 Linux build dependencies, `cargo fmt --check`, `cargo check --locked`, and `cargo test --locked`.
+- CI explicitly disables live Apify crawling, provides no credentials, and keeps the real Threads test ignored.
+- Added the detailed CI-01 report at `docs/agent-progress/2026-08-20-session-049-github-actions-validation.md`.
 
 ## Validation Snapshot
 
-- `npm run build`, `cargo fmt --check`, `cargo check`, and `git diff --check` pass.
-- Default parallel and serial Rust suites each report 84 passed, 0 failed, and 1 intentionally ignored live Threads test.
+- Workflow YAML and secret-scan patterns validate locally.
+- `npm run build`, `cargo fmt --check`, `cargo check --locked`, and `git diff --check` pass.
+- Locked parallel and serial Rust suites each report 84 passed, 0 failed, and 1 intentionally ignored live Threads test.
 - No live ExplainX, Threads, or Apify request ran.
 - Secret scans and ignored-runtime-file checks pass; only historical documentation naming scan patterns matched.
-- GitHub reports PR #1 as `OPEN`, `draft`, and without attached CI checks.
 
 ## Pending
 
-- Keep PR #1 draft for human architecture review.
-- Do not merge or start IMP-06 until review feedback is resolved and explicitly authorized.
-- Consider CI for frontend build and parallel Rust tests before marking the PR ready.
+- Observe the first GitHub-hosted frontend, Rust, and security checks.
+- Fix only genuine CI environment failures if a runner check fails.
+- Keep PR #1 draft; do not merge or start IMP-06 until explicitly authorized.
 
 ## Risk Note
 
-ExplainX import is not one transaction across the entire batch, so a mid-persistence database error can leave earlier rows committed under a failed run. Some referential guarantees intentionally live at the repository service boundary due DuckDB parent-update limits. Exact alias candidates remain pending, and this PR currently has no CI checks.
+The first Rust CI run may be slow because bundled DuckDB compiles from source. The filename-only pattern scan is a focused guardrail rather than a complete secret-scanning product. Runner compatibility still needs confirmation from the first GitHub Actions execution.
 
 ## Token Usage
 
