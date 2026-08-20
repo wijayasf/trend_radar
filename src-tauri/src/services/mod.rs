@@ -5,10 +5,11 @@ pub mod cost_classifier;
 pub mod discovery_crawler;
 pub mod duckdb_service;
 pub mod entity_detector;
+pub mod explainx_importer;
 #[allow(dead_code)]
 pub mod identity_bootstrap;
 pub mod identity_linker;
-// Phase A persistence is intentionally not wired to commands or UI yet.
+// Some foundation repository methods remain internal until later source-review milestones.
 #[allow(dead_code)]
 pub mod multi_source_repository;
 pub mod region_classifier;

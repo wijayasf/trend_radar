@@ -222,6 +222,21 @@ A durable object on an external ecosystem source, such as an ExplainX profile or
 
 Source records remain separate from canonical entities. ExplainX or future ecosystem records must not be inserted into `threads_posts_raw`.
 
+### explainx_records
+
+Source-specific, mutable ExplainX registry metadata imported from a local JSON array.
+
+- Primary key: opaque DuckDB UUID in `id`.
+- Unique external identity: `source_record_key`; `source_record_id` points to the corresponding durable `source_records` identity at the service boundary.
+- Stores name/normalized name, description, category, tags JSON, URLs, pricing/platform text, status, import batch UUID, and first/last-seen timestamps.
+- `raw_json` preserves the complete imported object for audit and future contract evolution.
+- Upsert is idempotent: an unchanged record is counted as skipped, changed source metadata updates the existing row, and no duplicate key is inserted.
+- Every valid import also appends a source observation under an ExplainX import collection run. Invalid JSON is rejected before any database write; records without a usable name increment the invalid count.
+
+ExplainX import bootstraps curated aliases and performs exact active alias lookup in ExplainX/global scope. A single non-ambiguous product alias creates only a `pending` same-entity link. Child-resource surfaces create a pending `child_resource` link and remain review-needed. Ambiguous or missing aliases are not linked. No import path writes to Candidate Review or `weekly_entity_metrics`.
+
+DuckDB currently prevents updates to a `source_records` parent row after observations or links reference it. Re-import therefore preserves that durable source identity row and keeps current mutable metadata in `explainx_records`; later observations still provide append-only seen history. This avoids deleting/recreating referenced source records.
+
 ### source_observations
 
 Append-oriented snapshots of a source record during a collection run.

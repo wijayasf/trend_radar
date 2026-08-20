@@ -39,6 +39,10 @@ impl MultiSourceRepository {
         Ok(Self { connection })
     }
 
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
     pub fn create_canonical_entity(
         &self,
         input: &NewCanonicalEntity,
@@ -3039,6 +3043,7 @@ mod tests {
             "source_record_entity_links",
             "entity_aliases",
             "external_identity_reviews",
+            "explainx_records",
         ] {
             let count: i64 = connection
                 .query_row(

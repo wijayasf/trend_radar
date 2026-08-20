@@ -1,40 +1,39 @@
 # Latest Handoff
 
 Date: 2026-08-20
-Session: 046-canonical-weekly-aggregation
+Session: 047-explainx-ingestion-foundation
 Agent: Codex
 
 ## Current State
 
-IMP-01, IMP-02, and IMP-03 are checkpointed through `7e823eb` on `feature/entity-identity-persistence`. IMP-04 adds a separate canonical weekly aggregation layer, has passed full validation, and is packaged as the current local checkpoint.
+IMP-01 through IMP-04 are checkpointed through `4889941` on `feature/entity-identity-persistence`. IMP-05 is fully validated for a local checkpoint and adds local ExplainX JSON import, source persistence, and conservative identity candidates. The requested remote feature-branch checkpoint was attempted before implementation but GitHub rejected the active account with HTTP 403.
 
 ## Key Changes
 
-- Added additive `weekly_entity_metrics` storage keyed by canonical UUID, week, and region.
-- Added transactional, idempotent canonical rebuild using the existing sentiment, cost, region, and score semantics.
-- Included only resolved mentions linked to active canonical entities; all unresolved states abstain and are reported separately.
-- Added `aggregate_weekly_entity_metrics` service/command and a focused Canonical Weekly Metrics UI panel.
-- Preserved `weekly_agent_metrics`, existing export behavior, collectors, classifiers, and score formula.
+- Added additive `explainx_records` plus `import_explainx_records(file_path)` for local JSON arrays.
+- Each valid item creates/reuses an ExplainX `source_records` identity and appends an import observation while preserving full raw JSON.
+- Exact unambiguous product aliases create pending same-entity links only; child resources stay review-needed, ambiguous aliases abstain, and missing aliases stay unlinked.
+- Added a simple ExplainX Import UI with counts, identity status, canonical candidate, and reasons.
+- Preserved Candidate Review, existing collectors/classifiers, and both weekly metric layers.
 
 ## Validation Snapshot
 
-- Three alias variants roll into one Claude Code canonical row with three mentions.
-- Indonesia and Global mentions remain separate rows for the same canonical UUID.
-- Ambiguous Codex and missing UnknownNewTool mentions are excluded and counted.
-- Repeated rebuild is stable, existing weekly aggregation is unchanged, and legacy data survives additive initialization.
-- Frontend build, Rust format/check, and diff validation pass.
-- Default-parallel and serial Rust suites each pass with 80 tests passed, 0 failed, and 1 live-network test ignored.
-- Secret-pattern scan found no real secret values; no live Threads or Apify request ran.
+- Targeted ExplainX tests cover valid import, raw JSON, idempotency/update, invalid/missing-name handling, exact Claude Code linkage, ambiguous Codex abstention, child-resource review, and unknown unlinked records.
+- Candidate Review and canonical weekly rows remain unchanged after import.
+- No live ExplainX, Threads, or Apify request ran.
+- Frontend build, Rust format/check, default-parallel tests, and serial tests pass.
+- Both Rust suites report 84 passed, 0 failed, and 1 intentionally ignored live-network test.
+- Secret scan and tracked-runtime-artifact check pass; only historical scan-pattern text matched.
 
 ## Pending
 
-- Review the local IMP-04 checkpoint; do not push it yet.
-- Do not push.
-- Do not start ExplainX ingestion, momentum, cross-source scoring, or Programming Fit work.
+- Review the local IMP-05 checkpoint; do not push it yet.
+- Resolve GitHub credentials before retrying the requested feature-branch checkpoint push.
+- Do not start scoring, momentum, Programming Fit, or live ExplainX collection.
 
 ## Risk Note
 
-Canonical metrics remain intentionally sparse until explicit mention identity linkage runs. Rebuild currently processes all local weeks and may need bounded windows only after local history grows materially.
+Exact alias links created by import remain pending and must not be treated as reviewed merges. ExplainX source-key fallback is less durable than an explicit upstream key. DuckDB parent-row update limits mean mutable imported metadata is maintained in `explainx_records`, not rewritten into already referenced `source_records` rows.
 
 ## Token Usage
 

@@ -27,6 +27,7 @@ fn main() {
             commands::threads::import_sample_threads_posts,
             commands::entities::detect_agent_mentions,
             commands::entities::link_agent_mentions_to_entities,
+            commands::explainx::import_explainx_records,
             commands::regions::classify_regions,
             commands::sentiments::classify_sentiments,
             commands::costs::classify_cost_signals,

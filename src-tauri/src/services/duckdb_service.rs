@@ -590,6 +590,37 @@ CREATE INDEX IF NOT EXISTS idx_external_identity_reviews_record_entity
     ON external_identity_reviews(source_record_id, entity_id);
 "#;
 
+const EXPLAINX_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS explainx_records (
+    id UUID PRIMARY KEY DEFAULT uuid(),
+    source_record_id UUID NOT NULL,
+    source_record_key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    tags_json TEXT,
+    url TEXT,
+    source_url TEXT,
+    pricing_text TEXT,
+    platform_text TEXT,
+    raw_json TEXT NOT NULL,
+    first_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ingestion_batch_id UUID NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    CHECK (status IN ('active', 'archived'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_explainx_records_normalized_name
+    ON explainx_records(normalized_name, status);
+
+CREATE INDEX IF NOT EXISTS idx_explainx_records_source_record
+    ON explainx_records(source_record_id);
+"#;
+
 const LEGACY_COMPATIBILITY_OBJECT: &str = "agent_mentions_compatible";
 const LEGACY_LOCAL_DATABASE_MESSAGE: &str = "Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.";
 
@@ -2434,7 +2465,10 @@ fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("DuckDB multi-source schema initialization failed: {error}"))?;
     connection
         .execute_batch(IDENTITY_PERSISTENCE_SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB identity schema initialization failed: {error}"))
+        .map_err(|error| format!("DuckDB identity schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(EXPLAINX_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB ExplainX schema initialization failed: {error}"))
 }
 
 #[cfg(test)]

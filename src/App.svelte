@@ -84,6 +84,18 @@
   let isReplayingApify = false;
   let isImportingApifyCache = false;
   let apifyDatasetFilePath = '';
+  let explainxFilePath = '';
+  let explainxImportStatus = 'Idle';
+  let explainxImported = 0;
+  let explainxInserted = 0;
+  let explainxUpdated = 0;
+  let explainxSkipped = 0;
+  let explainxInvalid = 0;
+  let explainxLinkedExactAlias = 0;
+  let explainxReviewNeeded = 0;
+  let explainxUnlinked = 0;
+  let explainxImportPreview: ExplainXImportPreview[] = [];
+  let isImportingExplainX = false;
   let apifyActorId = 'none';
   let apifyActorRunId = 'none';
   let apifyFilteredOutTotal = 0;
@@ -301,6 +313,30 @@
     imported_count: number;
     cache_path: string;
     message: string;
+  };
+
+  type ExplainXImportPreview = {
+    source_record_key: string;
+    name: string;
+    category: string;
+    tags: string[];
+    identity_status: string;
+    matched_canonical_entity: string;
+    reason: string;
+  };
+
+  type ExplainXImportResult = {
+    imported: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+    invalid: number;
+    linked_exact_alias: number;
+    review_needed: number;
+    unlinked: number;
+    ingestion_batch_id: string;
+    message: string;
+    sample_records: ExplainXImportPreview[];
   };
 
   type ApifyFilterReasons = {
@@ -1108,6 +1144,35 @@
     }
   }
 
+  async function importExplainXRecords() {
+    const filePath = explainxFilePath.trim();
+    if (!filePath || isImportingExplainX || isFullFlowRunning()) return;
+
+    isImportingExplainX = true;
+    explainxImportStatus = 'Importing ExplainX records...';
+    explainxImportPreview = [];
+
+    try {
+      const result = await invoke<ExplainXImportResult>('import_explainx_records', {
+        filePath,
+      });
+      explainxImported = result.imported;
+      explainxInserted = result.inserted;
+      explainxUpdated = result.updated;
+      explainxSkipped = result.skipped;
+      explainxInvalid = result.invalid;
+      explainxLinkedExactAlias = result.linked_exact_alias;
+      explainxReviewNeeded = result.review_needed;
+      explainxUnlinked = result.unlinked;
+      explainxImportPreview = result.sample_records;
+      explainxImportStatus = result.message;
+    } catch (error) {
+      explainxImportStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isImportingExplainX = false;
+    }
+  }
+
   async function testDiscoverySeed() {
     const keyword = discoverySeedTestKeyword.trim();
     if (!keyword || isTestingDiscoverySeed || isReplayingApify || isFullFlowRunning()) return;
@@ -1842,6 +1907,72 @@
               {/each}
             </tbody>
           </table>
+        </div>
+      {/if}
+    </section>
+
+    <section class="collector-panel" aria-label="ExplainX import">
+      <div>
+        <p class="panel-label">1. Source Import</p>
+        <h2>ExplainX Import</h2>
+        <p class="panel-note">
+          Import local ExplainX JSON as structured registry evidence. Exact aliases create pending
+          identity links only; ambiguous and child-resource records remain reviewable.
+        </p>
+      </div>
+
+      <form on:submit|preventDefault={importExplainXRecords}>
+        <label for="explainx-file">ExplainX JSON file</label>
+        <div class="collector-row import-row">
+          <input
+            id="explainx-file"
+            type="text"
+            bind:value={explainxFilePath}
+            placeholder="/path/to/explainx-records.json"
+            disabled={isImportingExplainX || isFullFlowRunning()}
+          />
+          <button
+            type="submit"
+            disabled={!explainxFilePath.trim() || isImportingExplainX || isFullFlowRunning()}
+          >
+            {#if isImportingExplainX}
+              {@render LoadingLabel('Importing...')}
+            {:else}
+              Import ExplainX Records
+            {/if}
+          </button>
+        </div>
+      </form>
+
+      <div class="collector-result" aria-live="polite">
+        <span>Status: {explainxImportStatus}</span>
+        <span>Imported: {explainxImported}</span>
+        <span>Inserted: {explainxInserted}</span>
+        <span>Updated: {explainxUpdated}</span>
+        <span>Unchanged: {explainxSkipped}</span>
+        <span>Invalid: {explainxInvalid}</span>
+        <span>Linked exact alias: {explainxLinkedExactAlias}</span>
+        <span>Review needed: {explainxReviewNeeded}</span>
+        <span>Unlinked: {explainxUnlinked}</span>
+      </div>
+
+      {#if explainxImportPreview.length > 0}
+        <div class="mention-preview" aria-label="ExplainX import preview">
+          {#each explainxImportPreview as record}
+            <article class="mention-row">
+              <div>
+                <strong>{record.name}</strong>
+                <span>{record.category}</span>
+                <span>{record.source_record_key}</span>
+                <span>Tags: {record.tags.length > 0 ? record.tags.join(', ') : 'none'}</span>
+              </div>
+              <p>{record.reason}</p>
+              <div>
+                <strong>{record.identity_status}</strong>
+                <span>Canonical: {record.matched_canonical_entity}</span>
+              </div>
+            </article>
+          {/each}
         </div>
       {/if}
     </section>
