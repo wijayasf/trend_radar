@@ -1,38 +1,37 @@
 # Latest Handoff
 
 Date: 2026-08-20
-Session: 049-github-actions-validation
+Session: 050-external-identity-review-ui
 Agent: Codex
 
 ## Current State
 
-PR #1 is open and draft at https://github.com/wijayasf/trend_radar/pull/1 from `feature/entity-identity-persistence` to `main`. CI-01 adds GitHub Actions validation for the existing frontend, Rust, and security gates without changing application logic. No merge occurred and IMP-06 was not started.
+IMP-06 is implemented on stacked branch `feature/external-identity-review-ui`, based on checkpoint `3d2ee61` from `feature/entity-identity-persistence`. PR #1 remains untouched, open, and draft. No merge occurred.
 
 ## Key Changes
 
-- Added `.github/workflows/ci.yml` with frontend, Rust, and tracked-secret-scan jobs.
-- Frontend uses Node.js 22, `npm ci`, and `npm run build`.
-- Rust uses stable Rust, Tauri 2 Linux build dependencies, `cargo fmt --check`, `cargo check --locked`, and `cargo test --locked`.
-- CI explicitly disables live Apify crawling, provides no credentials, and keeps the real Threads test ignored.
-- Added the detailed CI-01 report at `docs/agent-progress/2026-08-20-session-049-github-actions-validation.md`.
+- Added Tauri commands to list ExplainX external identity review items, submit explicit decisions, and inspect append-only history.
+- Added a desktop External Identity Review panel with pending/approved/rejected/ambiguous counts and human review controls.
+- All decision writes reuse the existing transactional `external_identity_reviews` repository operation.
+- Candidate Review and existing weekly metrics remain independent and unchanged.
+- Added isolated regression tests covering all decisions, repeated history, invalid input safety, and subsystem separation.
 
 ## Validation Snapshot
 
-- Workflow YAML and secret-scan patterns validate locally.
-- `npm run build`, `cargo fmt --check`, `cargo check --locked`, and `git diff --check` pass.
-- Locked parallel and serial Rust suites each report 84 passed, 0 failed, and 1 intentionally ignored live Threads test.
-- No live ExplainX, Threads, or Apify request ran.
-- Secret scans and ignored-runtime-file checks pass; only historical documentation naming scan patterns matched.
+- Frontend production build, Rust format/check, and diff checks pass.
+- Parallel and serial Rust suites each pass: 86 passed, 0 failed, 1 intentionally ignored live Threads test.
+- Requested secret scans found no real secret values; runtime artifacts remain ignored and untracked.
+- Tauri compiles and starts without schema/catalog errors; native UI click-through remains manual because browser-assisted inspection was unavailable.
+- No live Threads, Apify, or ExplainX request ran.
 
 ## Pending
 
-- Observe the first GitHub-hosted frontend, Rust, and security checks.
-- Fix only genuine CI environment failures if a runner check fails.
-- Keep PR #1 draft; do not merge or start IMP-06 until explicitly authorized.
+- Commit as `feat: add external identity review UI` and push only the stacked feature branch.
+- Optionally open a draft stacked PR targeting `feature/entity-identity-persistence` after push.
 
 ## Risk Note
 
-The first Rust CI run may be slow because bundled DuckDB compiles from source. The filename-only pattern scan is a focused guardrail rather than a complete secret-scanning product. Runner compatibility still needs confirmation from the first GitHub Actions execution.
+The UI presents identity evidence but cannot establish semantic equivalence automatically; review quality remains a human responsibility. The list is ExplainX-scoped for this milestone, and initial history state is inferred as pending because pending is not stored as an audit decision.
 
 ## Token Usage
 

@@ -96,6 +96,18 @@
   let explainxUnlinked = 0;
   let explainxImportPreview: ExplainXImportPreview[] = [];
   let isImportingExplainX = false;
+  let externalIdentityReviewStatus = 'Idle';
+  let externalIdentityReviewItems: ExternalIdentityReviewItem[] = [];
+  let externalIdentityReviewPending = 0;
+  let externalIdentityReviewApproved = 0;
+  let externalIdentityReviewRejected = 0;
+  let externalIdentityReviewAmbiguous = 0;
+  let isLoadingExternalIdentityReviews = false;
+  let activeExternalIdentityReviewAction = '';
+  let activeExternalIdentityReviewDecision = '';
+  let externalIdentityReviewHistory: ExternalIdentityReviewHistoryEntry[] = [];
+  let externalIdentityReviewHistoryLinkId = '';
+  let externalIdentityReviewHistoryStatus = 'Idle';
   let apifyActorId = 'none';
   let apifyActorRunId = 'none';
   let apifyFilteredOutTotal = 0;
@@ -221,6 +233,13 @@
     'unknown',
   ];
 
+  const externalRelationshipOptions = [
+    'same_entity',
+    'child_resource',
+    'related_entity',
+    'mentioned_entity',
+  ];
+
   type StepStatus =
     | 'Not started'
     | 'Ready'
@@ -337,6 +356,73 @@
     ingestion_batch_id: string;
     message: string;
     sample_records: ExplainXImportPreview[];
+  };
+
+  type ExternalIdentityReviewItem = {
+    link_id: string;
+    source: string;
+    source_record_id: string;
+    source_record_key: string;
+    source_record_name: string;
+    source_record_url: string | null;
+    source_record_description: string | null;
+    canonical_entity_id: string;
+    canonical_entity_name: string;
+    canonical_entity_type: string;
+    relationship_type: string;
+    current_status: string;
+    match_method: string;
+    match_confidence: number | null;
+    match_reason: string;
+    evidence: string | null;
+    created_at: string;
+    updated_at: string;
+    latest_decision: string | null;
+    latest_reviewer: string | null;
+    latest_review_note: string | null;
+    latest_reviewed_at: string | null;
+    draft_relationship_type?: string;
+    draft_reviewer?: string;
+    draft_note?: string;
+  };
+
+  type ExternalIdentityReviewListResult = {
+    total: number;
+    pending_count: number;
+    approved_count: number;
+    rejected_count: number;
+    ambiguous_count: number;
+    items: ExternalIdentityReviewItem[];
+    message: string;
+  };
+
+  type ExternalIdentityReviewHistoryEntry = {
+    review_id: string;
+    link_id: string;
+    source_record_id: string;
+    canonical_entity_id: string;
+    previous_state: string;
+    decision: string;
+    proposed_relationship_type: string;
+    match_method: string;
+    match_confidence: number | null;
+    evidence: string | null;
+    review_note: string | null;
+    reviewer: string;
+    reviewed_at: string;
+  };
+
+  type ExternalIdentityReviewHistoryResult = {
+    link_id: string;
+    total: number;
+    history: ExternalIdentityReviewHistoryEntry[];
+    message: string;
+  };
+
+  type ExternalIdentityReviewSubmissionResult = {
+    item: ExternalIdentityReviewItem;
+    history_count: number;
+    message: string;
   };
 
   type ApifyFilterReasons = {
@@ -579,6 +665,7 @@
       databaseHealth = await invoke<string>('check_database_health');
       await refreshRawPostsCount();
       await loadCandidateEntities();
+      await loadExternalIdentityReviewItems();
     } catch (error) {
       databaseHealth = `error: ${String(error)}`;
     }
@@ -1166,10 +1253,92 @@
       explainxUnlinked = result.unlinked;
       explainxImportPreview = result.sample_records;
       explainxImportStatus = result.message;
+      await loadExternalIdentityReviewItems();
     } catch (error) {
       explainxImportStatus = `error: ${friendlyError(error)}`;
     } finally {
       isImportingExplainX = false;
+    }
+  }
+
+  async function loadExternalIdentityReviewItems() {
+    if (isLoadingExternalIdentityReviews) return;
+
+    isLoadingExternalIdentityReviews = true;
+    externalIdentityReviewStatus = 'Loading ExplainX identity links...';
+    try {
+      const result = await invoke<ExternalIdentityReviewListResult>(
+        'list_external_identity_review_items',
+      );
+      externalIdentityReviewPending = result.pending_count;
+      externalIdentityReviewApproved = result.approved_count;
+      externalIdentityReviewRejected = result.rejected_count;
+      externalIdentityReviewAmbiguous = result.ambiguous_count;
+      externalIdentityReviewItems = result.items.map((item) => ({
+        ...item,
+        draft_relationship_type: item.relationship_type,
+        draft_reviewer: '',
+        draft_note: '',
+      }));
+      externalIdentityReviewStatus = result.message;
+    } catch (error) {
+      externalIdentityReviewStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isLoadingExternalIdentityReviews = false;
+    }
+  }
+
+  async function submitExternalIdentityReview(
+    item: ExternalIdentityReviewItem,
+    decision: 'approved' | 'rejected' | 'ambiguous',
+  ) {
+    if (activeExternalIdentityReviewAction) return;
+
+    const reviewer = item.draft_reviewer?.trim() || '';
+    const relationshipType = item.draft_relationship_type || item.relationship_type;
+    if (!reviewer) {
+      externalIdentityReviewStatus = 'error: Reviewer is required before recording a decision.';
+      return;
+    }
+
+    activeExternalIdentityReviewAction = item.link_id;
+    activeExternalIdentityReviewDecision = decision;
+    externalIdentityReviewStatus = `Recording ${decision} decision for ${item.source_record_name}...`;
+    try {
+      const result = await invoke<ExternalIdentityReviewSubmissionResult>(
+        'submit_external_identity_review',
+        {
+          linkId: item.link_id,
+          relationshipType,
+          decision,
+          reviewer,
+          evidenceNote: item.draft_note?.trim() || null,
+        },
+      );
+      externalIdentityReviewStatus = result.message;
+      await loadExternalIdentityReviewItems();
+      await loadExternalIdentityReviewHistory(item.link_id);
+    } catch (error) {
+      externalIdentityReviewStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      activeExternalIdentityReviewAction = '';
+      activeExternalIdentityReviewDecision = '';
+    }
+  }
+
+  async function loadExternalIdentityReviewHistory(linkId: string) {
+    externalIdentityReviewHistoryLinkId = linkId;
+    externalIdentityReviewHistoryStatus = 'Loading review history...';
+    try {
+      const result = await invoke<ExternalIdentityReviewHistoryResult>(
+        'get_external_identity_review_history',
+        { linkId },
+      );
+      externalIdentityReviewHistory = result.history;
+      externalIdentityReviewHistoryStatus = result.message;
+    } catch (error) {
+      externalIdentityReviewHistory = [];
+      externalIdentityReviewHistoryStatus = `error: ${friendlyError(error)}`;
     }
   }
 
@@ -1974,6 +2143,186 @@
             </article>
           {/each}
         </div>
+      {/if}
+    </section>
+
+    <section class="detector-panel" aria-label="External identity review">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">1. External Identity Review</p>
+          <h2>Review ExplainX Identity Links</h2>
+          <p class="panel-note">
+            Confirm whether an imported source record is the same canonical entity, a child
+            resource, a related entity, or only a mention. Every decision is retained in history.
+          </p>
+        </div>
+        <button
+          type="button"
+          on:click={loadExternalIdentityReviewItems}
+          disabled={isLoadingExternalIdentityReviews || Boolean(activeExternalIdentityReviewAction)}
+        >
+          {#if isLoadingExternalIdentityReviews}
+            {@render LoadingLabel('Refreshing...')}
+          {:else}
+            Refresh Identity Reviews
+          {/if}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {externalIdentityReviewStatus}</span>
+        <span>Pending: {externalIdentityReviewPending}</span>
+        <span>Approved: {externalIdentityReviewApproved}</span>
+        <span>Rejected: {externalIdentityReviewRejected}</span>
+        <span>Ambiguous: {externalIdentityReviewAmbiguous}</span>
+      </div>
+
+      {#if externalIdentityReviewItems.length > 0}
+        <div class="external-review-list" aria-label="ExplainX identity review items">
+          {#each externalIdentityReviewItems as item}
+            <article class="external-review-item">
+              <div class="external-review-summary">
+                <div>
+                  <strong>{item.source_record_name}</strong>
+                  <span>{item.source} / {item.source_record_key}</span>
+                  {#if item.source_record_url}
+                    <span>{item.source_record_url}</span>
+                  {/if}
+                </div>
+                <div>
+                  <strong>{item.canonical_entity_name}</strong>
+                  <span>{item.canonical_entity_type}</span>
+                  <span>Relationship: {item.relationship_type}</span>
+                </div>
+                <div>
+                  <strong class={`review-state review-state-${item.current_status}`}>
+                    {item.current_status}
+                  </strong>
+                  <span>Latest: {item.latest_decision || 'none'}</span>
+                  {#if item.latest_reviewer}
+                    <span>Reviewer: {item.latest_reviewer}</span>
+                  {/if}
+                </div>
+              </div>
+
+              {#if item.source_record_description}
+                <p>{item.source_record_description}</p>
+              {/if}
+              <p>{item.match_reason}</p>
+              <p class="review-evidence">Evidence: {item.evidence || 'none'}</p>
+
+              <div class="external-review-controls">
+                <label>
+                  Relationship
+                  <select
+                    bind:value={item.draft_relationship_type}
+                    disabled={Boolean(activeExternalIdentityReviewAction)}
+                  >
+                    {#each externalRelationshipOptions as relationship}
+                      <option value={relationship}>{relationship}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  Reviewer
+                  <input
+                    bind:value={item.draft_reviewer}
+                    placeholder="Reviewer name"
+                    disabled={Boolean(activeExternalIdentityReviewAction)}
+                  />
+                </label>
+                <label>
+                  Evidence note
+                  <input
+                    bind:value={item.draft_note}
+                    placeholder="Optional note"
+                    disabled={Boolean(activeExternalIdentityReviewAction)}
+                  />
+                </label>
+              </div>
+
+              <div class="export-actions external-review-actions">
+                <button
+                  type="button"
+                  on:click={() => submitExternalIdentityReview(item, 'approved')}
+                  disabled={Boolean(activeExternalIdentityReviewAction) || !item.draft_reviewer?.trim()}
+                >
+                  {#if activeExternalIdentityReviewAction === item.link_id && activeExternalIdentityReviewDecision === 'approved'}
+                    {@render LoadingLabel('Approving...')}
+                  {:else}
+                    Approve
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  on:click={() => submitExternalIdentityReview(item, 'rejected')}
+                  disabled={Boolean(activeExternalIdentityReviewAction) || !item.draft_reviewer?.trim()}
+                >
+                  {#if activeExternalIdentityReviewAction === item.link_id && activeExternalIdentityReviewDecision === 'rejected'}
+                    {@render LoadingLabel('Rejecting...')}
+                  {:else}
+                    Reject
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  on:click={() => submitExternalIdentityReview(item, 'ambiguous')}
+                  disabled={Boolean(activeExternalIdentityReviewAction) || !item.draft_reviewer?.trim()}
+                >
+                  {#if activeExternalIdentityReviewAction === item.link_id && activeExternalIdentityReviewDecision === 'ambiguous'}
+                    {@render LoadingLabel('Saving...')}
+                  {:else}
+                    Mark Ambiguous
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  on:click={() => loadExternalIdentityReviewHistory(item.link_id)}
+                  disabled={Boolean(activeExternalIdentityReviewAction)}
+                >
+                  View History
+                </button>
+              </div>
+
+              {#if externalIdentityReviewHistoryLinkId === item.link_id}
+                <div class="review-history" aria-live="polite">
+                  <strong>Review History</strong>
+                  <span>{externalIdentityReviewHistoryStatus}</span>
+                  {#if externalIdentityReviewHistory.length > 0}
+                    <div class="metrics-table-wrap">
+                      <table class="metrics-table review-history-table">
+                        <thead>
+                          <tr>
+                            <th>Reviewed</th>
+                            <th>Previous</th>
+                            <th>Decision</th>
+                            <th>Relationship</th>
+                            <th>Reviewer</th>
+                            <th>Note</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each externalIdentityReviewHistory as history}
+                            <tr>
+                              <td>{history.reviewed_at}</td>
+                              <td>{history.previous_state}</td>
+                              <td>{history.decision}</td>
+                              <td>{history.proposed_relationship_type}</td>
+                              <td>{history.reviewer}</td>
+                              <td>{history.review_note || '-'}</td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </article>
+          {/each}
+        </div>
+      {:else}
+        <p class="empty-state">No ExplainX identity links are available for review.</p>
       {/if}
     </section>
 

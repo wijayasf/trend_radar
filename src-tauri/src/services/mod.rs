@@ -6,6 +6,7 @@ pub mod discovery_crawler;
 pub mod duckdb_service;
 pub mod entity_detector;
 pub mod explainx_importer;
+pub mod external_identity_review;
 #[allow(dead_code)]
 pub mod identity_bootstrap;
 pub mod identity_linker;

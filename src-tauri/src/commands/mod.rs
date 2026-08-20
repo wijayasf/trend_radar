@@ -6,6 +6,7 @@ pub mod database;
 pub mod discovery;
 pub mod entities;
 pub mod explainx;
+pub mod external_reviews;
 pub mod health;
 pub mod regions;
 pub mod reports;
