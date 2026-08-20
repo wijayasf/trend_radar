@@ -464,6 +464,78 @@ CREATE INDEX IF NOT EXISTS idx_source_entity_links_entity
     ON source_record_entity_links(entity_id, review_state);
 "#;
 
+const IDENTITY_PERSISTENCE_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    entity_alias_id UUID PRIMARY KEY DEFAULT uuid(),
+    entity_id UUID NOT NULL,
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    source_scope TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    is_ambiguous BOOLEAN NOT NULL DEFAULT FALSE,
+    context_terms_json TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES canonical_entities(entity_id),
+    UNIQUE (entity_id, normalized_alias, source_scope),
+    CHECK (source_scope IN (
+        'global',
+        'threads',
+        'explainx',
+        'github',
+        'hacker_news',
+        'product_hunt'
+    )),
+    CHECK (provenance IN (
+        'bootstrap_yaml',
+        'candidate_review',
+        'source_review',
+        'manual'
+    )),
+    CHECK (status IN ('active', 'archived'))
+);
+
+CREATE TABLE IF NOT EXISTS external_identity_reviews (
+    review_id UUID PRIMARY KEY DEFAULT uuid(),
+    link_id UUID NOT NULL,
+    source_record_id UUID NOT NULL,
+    entity_id UUID NOT NULL,
+    proposed_relationship_type TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    match_method TEXT NOT NULL,
+    match_confidence DOUBLE,
+    evidence_json TEXT,
+    review_note TEXT,
+    reviewer TEXT NOT NULL,
+    reviewed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (proposed_relationship_type IN (
+        'same_entity',
+        'child_resource',
+        'related_entity',
+        'mentioned_entity'
+    )),
+    CHECK (decision IN ('approved', 'rejected', 'ambiguous')),
+    CHECK (
+        match_confidence IS NULL
+        OR (match_confidence >= 0.0 AND match_confidence <= 1.0)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_lookup
+    ON entity_aliases(normalized_alias, source_scope, status);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity
+    ON entity_aliases(entity_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_external_identity_reviews_link_time
+    ON external_identity_reviews(link_id, reviewed_at);
+
+CREATE INDEX IF NOT EXISTS idx_external_identity_reviews_record_entity
+    ON external_identity_reviews(source_record_id, entity_id);
+"#;
+
 const LEGACY_COMPATIBILITY_OBJECT: &str = "agent_mentions_compatible";
 const LEGACY_LOCAL_DATABASE_MESSAGE: &str = "Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.";
 
@@ -1932,7 +2004,10 @@ fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("DuckDB schema initialization failed: {error}"))?;
     connection
         .execute_batch(MULTI_SOURCE_SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB multi-source schema initialization failed: {error}"))
+        .map_err(|error| format!("DuckDB multi-source schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(IDENTITY_PERSISTENCE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB identity schema initialization failed: {error}"))
 }
 
 #[cfg(test)]
@@ -1942,6 +2017,18 @@ pub(crate) fn initialize_legacy_schema_at(database_path: &Path) -> Result<(), St
     connection
         .execute_batch(SCHEMA_SQL)
         .map_err(|error| format!("DuckDB legacy test schema initialization failed: {error}"))
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_imp01_schema_at(database_path: &Path) -> Result<(), String> {
+    ensure_parent_directory(database_path)?;
+    let connection = open_connection(database_path)?;
+    connection
+        .execute_batch(SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB legacy schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(MULTI_SOURCE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB IMP-01 schema initialization failed: {error}"))
 }
 
 fn open_connection(database_path: &Path) -> Result<Connection, String> {

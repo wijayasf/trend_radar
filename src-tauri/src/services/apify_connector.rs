@@ -890,7 +890,8 @@ mod tests {
         cleanup_test_file(&database_path);
         cleanup_test_file(&source_path);
         cleanup_test_file(&cache_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
 
         let exported_items = vec![
             serde_json::json!({

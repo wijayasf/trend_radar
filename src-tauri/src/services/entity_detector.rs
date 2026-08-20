@@ -88,7 +88,7 @@ pub fn detect_agent_mentions() -> Result<EntityDetectionResult, String> {
     })
 }
 
-fn load_aliases_config() -> Result<AliasesConfig, String> {
+pub(crate) fn load_aliases_config() -> Result<AliasesConfig, String> {
     let config_path = find_aliases_config_path().ok_or_else(|| {
         format!("Could not find {ALIASES_CONFIG_PATH} from the app working directory")
     })?;

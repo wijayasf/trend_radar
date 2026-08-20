@@ -3,9 +3,12 @@ use std::path::Path;
 use duckdb::{params, Connection, OptionalExt, Transaction};
 
 use crate::models::multi_source::{
-    normalize_entity_name, AppendObservationResult, CanonicalEntity, CanonicalEntityMetadataUpdate,
-    CollectionMode, CollectionRunStatus, EntityStatus, ExternalSource, LinkReviewState,
-    NewCanonicalEntity, NewCollectionRun, NewSourceObservation, NewSourceRecordEntityLink,
+    normalize_entity_name, AliasEntityMatch, AliasProvenance, AliasSourceScope, AliasStatus,
+    AppendObservationResult, CanonicalEntity, CanonicalEntityMetadataUpdate, CollectionMode,
+    CollectionRunStatus, CreateEntityAliasResult, EntityAlias, EntityStatus,
+    ExternalIdentityDecision, ExternalIdentityReview, ExternalIdentityReviewRequest,
+    ExternalIdentityReviewResult, ExternalSource, LinkReviewState, NewCanonicalEntity,
+    NewCollectionRun, NewEntityAlias, NewSourceObservation, NewSourceRecordEntityLink,
     PrimaryEntityType, RelationshipType, ResolutionState, SourceCollectionRun, SourceObservation,
     SourceRecord, SourceRecordEntityLink, SourceRecordUpsert,
 };
@@ -165,6 +168,147 @@ impl MultiSourceRepository {
         }
         self.get_canonical_entity(entity_id)?.ok_or_else(|| {
             "Canonical entity was updated but could not be loaded afterwards.".to_string()
+        })
+    }
+
+    pub fn create_entity_alias(
+        &self,
+        input: &NewEntityAlias,
+    ) -> Result<CreateEntityAliasResult, String> {
+        validate_entity_alias_input(input)?;
+        let normalized_alias = normalize_entity_name(&input.alias);
+        if let Some(existing) = load_entity_alias_by_contract(
+            &self.connection,
+            &input.entity_id,
+            &normalized_alias,
+            input.source_scope,
+        )? {
+            return Ok(CreateEntityAliasResult {
+                alias: existing,
+                inserted: false,
+            });
+        }
+
+        let entity_alias_id = generate_uuid(&self.connection)?;
+        self.connection
+            .execute(
+                r#"
+                INSERT INTO entity_aliases (
+                    entity_alias_id,
+                    entity_id,
+                    alias,
+                    normalized_alias,
+                    source_scope,
+                    provenance,
+                    is_ambiguous,
+                    context_terms_json,
+                    status
+                ) VALUES (
+                    CAST(?1 AS UUID), CAST(?2 AS UUID), ?3, ?4, ?5, ?6, ?7, ?8, 'active'
+                )
+                "#,
+                params![
+                    entity_alias_id,
+                    input.entity_id,
+                    input.alias.trim(),
+                    normalized_alias,
+                    input.source_scope.as_str(),
+                    input.provenance.as_str(),
+                    input.is_ambiguous,
+                    normalize_optional_text(input.context_terms_json.as_deref())
+                ],
+            )
+            .map_err(|error| format!("DuckDB entity alias insert failed: {error}"))?;
+
+        Ok(CreateEntityAliasResult {
+            alias: load_entity_alias(&self.connection, &entity_alias_id)?.ok_or_else(|| {
+                "Entity alias was inserted but could not be loaded afterwards.".to_string()
+            })?,
+            inserted: true,
+        })
+    }
+
+    pub fn list_aliases_for_entity(&self, entity_id: &str) -> Result<Vec<EntityAlias>, String> {
+        validate_non_empty("entity ID", entity_id)?;
+        query_entity_aliases(
+            &self.connection,
+            "WHERE entity_id = CAST(?1 AS UUID) ORDER BY normalized_alias, source_scope",
+            entity_id,
+        )
+    }
+
+    pub fn list_aliases_by_source_scope(
+        &self,
+        source_scope: AliasSourceScope,
+    ) -> Result<Vec<EntityAlias>, String> {
+        query_entity_aliases(
+            &self.connection,
+            "WHERE source_scope = ?1 ORDER BY normalized_alias, CAST(entity_id AS VARCHAR)",
+            source_scope.as_str(),
+        )
+    }
+
+    pub fn lookup_entities_by_normalized_alias(
+        &self,
+        alias: &str,
+        source_scope: AliasSourceScope,
+    ) -> Result<Vec<AliasEntityMatch>, String> {
+        let normalized_alias = normalize_entity_name(alias);
+        validate_non_empty("normalized alias", &normalized_alias)?;
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                r#"
+                SELECT
+                    {},
+                    {}
+                FROM entity_aliases aliases
+                JOIN canonical_entities entities ON entities.entity_id = aliases.entity_id
+                WHERE aliases.normalized_alias = ?1
+                    AND aliases.status = 'active'
+                    AND entities.status = 'active'
+                    AND aliases.source_scope IN ('global', ?2)
+                ORDER BY aliases.source_scope, entities.canonical_name,
+                    CAST(aliases.entity_alias_id AS VARCHAR)
+                "#,
+                entity_alias_columns("aliases"),
+                canonical_entity_columns("entities")
+            ))
+            .map_err(|error| format!("DuckDB entity alias lookup preparation failed: {error}"))?;
+        let rows = statement
+            .query_map(
+                params![normalized_alias, source_scope.as_str()],
+                read_alias_entity_match,
+            )
+            .map_err(|error| format!("DuckDB entity alias lookup failed: {error}"))?;
+        let mut matches = Vec::new();
+        for row in rows {
+            matches.push(
+                row.map_err(|error| format!("DuckDB entity alias lookup row failed: {error}"))?
+                    .try_into()?,
+            );
+        }
+        Ok(matches)
+    }
+
+    pub fn archive_entity_alias(&self, entity_alias_id: &str) -> Result<EntityAlias, String> {
+        validate_non_empty("entity alias ID", entity_alias_id)?;
+        let updated = self
+            .connection
+            .execute(
+                r#"
+                UPDATE entity_aliases
+                SET status = 'archived', updated_at = CURRENT_TIMESTAMP
+                WHERE entity_alias_id = CAST(?1 AS UUID)
+                "#,
+                params![entity_alias_id],
+            )
+            .map_err(|error| format!("DuckDB entity alias archive failed: {error}"))?;
+        if updated == 0 {
+            return Err(format!("Entity alias not found: {entity_alias_id}"));
+        }
+        load_entity_alias(&self.connection, entity_alias_id)?.ok_or_else(|| {
+            "Entity alias was archived but could not be loaded afterwards.".to_string()
         })
     }
 
@@ -577,22 +721,171 @@ impl MultiSourceRepository {
         })
     }
 
+    pub fn review_external_identity_link(
+        &self,
+        request: &ExternalIdentityReviewRequest,
+    ) -> Result<ExternalIdentityReviewResult, String> {
+        self.review_external_identity_link_internal(request, false)
+    }
+
+    fn review_external_identity_link_internal(
+        &self,
+        request: &ExternalIdentityReviewRequest,
+        fail_after_audit: bool,
+    ) -> Result<ExternalIdentityReviewResult, String> {
+        validate_external_identity_review(request)?;
+        let transaction = self.connection.unchecked_transaction().map_err(|error| {
+            format!("DuckDB external identity review transaction failed: {error}")
+        })?;
+        let current = load_source_record_entity_link(&transaction, &request.link_id)?
+            .ok_or_else(|| format!("Source/entity link not found: {}", request.link_id))?;
+        if request.decision.effective_link_state() == LinkReviewState::Approved {
+            ensure_record_accepts_approved_link(&transaction, &current.source_record_id)?;
+        }
+
+        let review_id = generate_uuid(&transaction)?;
+        transaction
+            .execute(
+                r#"
+                INSERT INTO external_identity_reviews (
+                    review_id,
+                    link_id,
+                    source_record_id,
+                    entity_id,
+                    proposed_relationship_type,
+                    decision,
+                    match_method,
+                    match_confidence,
+                    evidence_json,
+                    review_note,
+                    reviewer
+                ) VALUES (
+                    CAST(?1 AS UUID), CAST(?2 AS UUID), CAST(?3 AS UUID), CAST(?4 AS UUID),
+                    ?5, ?6, ?7, ?8, ?9, ?10, ?11
+                )
+                "#,
+                params![
+                    review_id,
+                    current.link_id,
+                    current.source_record_id,
+                    current.entity_id,
+                    request.proposed_relationship_type.as_str(),
+                    request.decision.as_str(),
+                    request.match_method.trim(),
+                    request.match_confidence,
+                    normalize_optional_text(request.evidence_json.as_deref()),
+                    normalize_optional_text(request.review_note.as_deref()),
+                    request.reviewer.trim()
+                ],
+            )
+            .map_err(|error| format!("DuckDB external identity review insert failed: {error}"))?;
+
+        if fail_after_audit {
+            return Err(
+                "Forced external identity review failure for rollback validation.".to_string(),
+            );
+        }
+
+        transaction
+            .execute(
+                r#"
+                UPDATE source_record_entity_links
+                SET
+                    relationship_type = ?2,
+                    match_method = ?3,
+                    match_confidence = ?4,
+                    review_state = ?5,
+                    evidence_json = ?6,
+                    reviewed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE link_id = CAST(?1 AS UUID)
+                "#,
+                params![
+                    current.link_id,
+                    request.proposed_relationship_type.as_str(),
+                    request.match_method.trim(),
+                    request.match_confidence,
+                    request.decision.effective_link_state().as_str(),
+                    normalize_optional_text(request.evidence_json.as_deref())
+                ],
+            )
+            .map_err(|error| format!("DuckDB effective identity link update failed: {error}"))?;
+        reconcile_reviewed_record_resolution(&transaction, &current.source_record_id)?;
+
+        let review = load_external_identity_review(&transaction, &review_id)?.ok_or_else(|| {
+            "External identity review could not be loaded before commit.".to_string()
+        })?;
+        let effective_link = load_source_record_entity_link(&transaction, &current.link_id)?
+            .ok_or_else(|| {
+                "Effective identity link could not be loaded before commit.".to_string()
+            })?;
+        transaction
+            .commit()
+            .map_err(|error| format!("DuckDB external identity review commit failed: {error}"))?;
+        Ok(ExternalIdentityReviewResult {
+            review,
+            effective_link,
+        })
+    }
+
+    #[cfg(test)]
+    fn review_external_identity_link_with_forced_failure(
+        &self,
+        request: &ExternalIdentityReviewRequest,
+    ) -> Result<ExternalIdentityReviewResult, String> {
+        self.review_external_identity_link_internal(request, true)
+    }
+
+    pub fn list_external_identity_reviews(
+        &self,
+        link_id: &str,
+    ) -> Result<Vec<ExternalIdentityReview>, String> {
+        validate_non_empty("source/entity link ID", link_id)?;
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "{} WHERE link_id = CAST(?1 AS UUID) ORDER BY reviewed_at, created_at, CAST(review_id AS VARCHAR)",
+                external_identity_review_select_sql()
+            ))
+            .map_err(|error| format!("DuckDB external identity review preparation failed: {error}"))?;
+        let rows = statement
+            .query_map(params![link_id], read_raw_external_identity_review)
+            .map_err(|error| format!("DuckDB external identity review query failed: {error}"))?;
+        let mut reviews = Vec::new();
+        for row in rows {
+            reviews.push(RawExternalIdentityReview::try_into(row.map_err(
+                |error| format!("DuckDB external identity review row read failed: {error}"),
+            )?)?);
+        }
+        Ok(reviews)
+    }
+
+    pub fn get_latest_external_identity_review(
+        &self,
+        link_id: &str,
+    ) -> Result<Option<ExternalIdentityReview>, String> {
+        validate_non_empty("source/entity link ID", link_id)?;
+        let raw = self
+            .connection
+            .query_row(
+                &format!(
+                    "{} WHERE link_id = CAST(?1 AS UUID) ORDER BY reviewed_at DESC, created_at DESC, CAST(review_id AS VARCHAR) DESC LIMIT 1",
+                    external_identity_review_select_sql()
+                ),
+                params![link_id],
+                read_raw_external_identity_review,
+            )
+            .optional()
+            .map_err(|error| format!("DuckDB latest external identity review query failed: {error}"))?;
+        raw.map(TryInto::try_into).transpose()
+    }
+
     fn get_source_record_entity_link(
         &self,
         link_id: &str,
     ) -> Result<Option<SourceRecordEntityLink>, String> {
         validate_non_empty("source/entity link ID", link_id)?;
-        self.connection
-            .query_row(
-                &format!(
-                    "{} WHERE link_id = CAST(?1 AS UUID)",
-                    source_record_entity_link_select_sql()
-                ),
-                params![link_id],
-                read_source_record_entity_link,
-            )
-            .optional()
-            .map_err(|error| format!("DuckDB source/entity link query failed: {error}"))
+        load_source_record_entity_link(&self.connection, link_id)
     }
 
     fn query_links(&self, clause: &str, id: &str) -> Result<Vec<SourceRecordEntityLink>, String> {
@@ -615,6 +908,102 @@ impl MultiSourceRepository {
         }
         Ok(links)
     }
+}
+
+fn load_entity_alias(
+    connection: &Connection,
+    entity_alias_id: &str,
+) -> Result<Option<EntityAlias>, String> {
+    connection
+        .query_row(
+            &format!(
+                "{} WHERE entity_alias_id = CAST(?1 AS UUID)",
+                entity_alias_select_sql()
+            ),
+            params![entity_alias_id],
+            read_raw_entity_alias,
+        )
+        .optional()
+        .map_err(|error| format!("DuckDB entity alias query failed: {error}"))?
+        .map(TryInto::try_into)
+        .transpose()
+}
+
+fn load_entity_alias_by_contract(
+    connection: &Connection,
+    entity_id: &str,
+    normalized_alias: &str,
+    source_scope: AliasSourceScope,
+) -> Result<Option<EntityAlias>, String> {
+    connection
+        .query_row(
+            &format!(
+                "{} WHERE entity_id = CAST(?1 AS UUID) AND normalized_alias = ?2 AND source_scope = ?3",
+                entity_alias_select_sql()
+            ),
+            params![entity_id, normalized_alias, source_scope.as_str()],
+            read_raw_entity_alias,
+        )
+        .optional()
+        .map_err(|error| format!("DuckDB entity alias contract query failed: {error}"))?
+        .map(TryInto::try_into)
+        .transpose()
+}
+
+fn query_entity_aliases(
+    connection: &Connection,
+    clause: &str,
+    parameter: &str,
+) -> Result<Vec<EntityAlias>, String> {
+    let mut statement = connection
+        .prepare(&format!("{} {clause}", entity_alias_select_sql()))
+        .map_err(|error| format!("DuckDB entity alias preparation failed: {error}"))?;
+    let rows = statement
+        .query_map(params![parameter], read_raw_entity_alias)
+        .map_err(|error| format!("DuckDB entity alias query failed: {error}"))?;
+    let mut aliases = Vec::new();
+    for row in rows {
+        aliases.push(RawEntityAlias::try_into(row.map_err(|error| {
+            format!("DuckDB entity alias row read failed: {error}")
+        })?)?);
+    }
+    Ok(aliases)
+}
+
+fn load_source_record_entity_link(
+    connection: &Connection,
+    link_id: &str,
+) -> Result<Option<SourceRecordEntityLink>, String> {
+    connection
+        .query_row(
+            &format!(
+                "{} WHERE link_id = CAST(?1 AS UUID)",
+                source_record_entity_link_select_sql()
+            ),
+            params![link_id],
+            read_source_record_entity_link,
+        )
+        .optional()
+        .map_err(|error| format!("DuckDB source/entity link query failed: {error}"))
+}
+
+fn load_external_identity_review(
+    connection: &Connection,
+    review_id: &str,
+) -> Result<Option<ExternalIdentityReview>, String> {
+    connection
+        .query_row(
+            &format!(
+                "{} WHERE review_id = CAST(?1 AS UUID)",
+                external_identity_review_select_sql()
+            ),
+            params![review_id],
+            read_raw_external_identity_review,
+        )
+        .optional()
+        .map_err(|error| format!("DuckDB external identity review query failed: {error}"))?
+        .map(TryInto::try_into)
+        .transpose()
 }
 
 fn upsert_source_record_on(
@@ -966,6 +1355,44 @@ fn reconcile_record_resolution(
     Ok(())
 }
 
+fn reconcile_reviewed_record_resolution(
+    transaction: &Transaction<'_>,
+    source_record_id: &str,
+) -> Result<(), String> {
+    let current_state: String = transaction
+        .query_row(
+            "SELECT resolution_state FROM source_records WHERE source_record_id = CAST(?1 AS UUID)",
+            params![source_record_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            format!("DuckDB reviewed source record resolution query failed: {error}")
+        })?;
+    let approved_links = approved_link_count(transaction, source_record_id)?;
+    let next_state = if current_state == ResolutionState::NoProductEntity.as_str() {
+        ResolutionState::NoProductEntity
+    } else {
+        match approved_links {
+            0 => ResolutionState::Unresolved,
+            1 => ResolutionState::SingleEntity,
+            _ => ResolutionState::MultipleEntities,
+        }
+    };
+    transaction
+        .execute(
+            r#"
+            UPDATE source_records
+            SET resolution_state = ?2, updated_at = CURRENT_TIMESTAMP
+            WHERE source_record_id = CAST(?1 AS UUID)
+            "#,
+            params![source_record_id, next_state.as_str()],
+        )
+        .map_err(|error| {
+            format!("DuckDB reviewed source record resolution update failed: {error}")
+        })?;
+    Ok(())
+}
+
 fn validate_source_record_input(input: &SourceRecordUpsert) -> Result<(), String> {
     validate_non_empty("source record key", &input.source_record_key)?;
     validate_non_empty("source record type", &input.record_type)?;
@@ -1006,6 +1433,38 @@ fn validate_link_input(input: &NewSourceRecordEntityLink) -> Result<(), String> 
         .is_some_and(|confidence| !(0.0..=1.0).contains(&confidence))
     {
         return Err("Link match confidence must be between 0 and 1.".to_string());
+    }
+    Ok(())
+}
+
+fn validate_entity_alias_input(input: &NewEntityAlias) -> Result<(), String> {
+    validate_non_empty("entity ID", &input.entity_id)?;
+    validate_non_empty("entity alias", &input.alias)?;
+    validate_non_empty(
+        "normalized entity alias",
+        &normalize_entity_name(&input.alias),
+    )?;
+    validate_optional_json(
+        "entity alias context terms",
+        input.context_terms_json.as_deref(),
+    )
+}
+
+fn validate_external_identity_review(
+    request: &ExternalIdentityReviewRequest,
+) -> Result<(), String> {
+    validate_non_empty("source/entity link ID", &request.link_id)?;
+    validate_non_empty("external identity match method", &request.match_method)?;
+    validate_non_empty("external identity reviewer", &request.reviewer)?;
+    validate_optional_json(
+        "external identity review evidence",
+        request.evidence_json.as_deref(),
+    )?;
+    if request
+        .match_confidence
+        .is_some_and(|confidence| !(0.0..=1.0).contains(&confidence))
+    {
+        return Err("External identity match confidence must be between 0 and 1.".to_string());
     }
     Ok(())
 }
@@ -1140,6 +1599,68 @@ fn source_record_entity_link_select_sql() -> &'static str {
         CAST(created_at AS VARCHAR),
         CAST(updated_at AS VARCHAR)
     FROM source_record_entity_links
+    "#
+}
+
+fn entity_alias_columns(alias: &str) -> String {
+    format!(
+        r#"
+        CAST({alias}.entity_alias_id AS VARCHAR),
+        CAST({alias}.entity_id AS VARCHAR),
+        {alias}.alias,
+        {alias}.normalized_alias,
+        {alias}.source_scope,
+        {alias}.provenance,
+        {alias}.is_ambiguous,
+        {alias}.context_terms_json,
+        {alias}.status,
+        CAST({alias}.created_at AS VARCHAR),
+        CAST({alias}.updated_at AS VARCHAR)
+        "#
+    )
+}
+
+fn canonical_entity_columns(alias: &str) -> String {
+    format!(
+        r#"
+        CAST({alias}.entity_id AS VARCHAR),
+        {alias}.canonical_name,
+        {alias}.normalized_name,
+        {alias}.primary_type,
+        {alias}.status,
+        {alias}.description,
+        {alias}.primary_website,
+        {alias}.primary_repository,
+        CAST({alias}.created_at AS VARCHAR),
+        CAST({alias}.updated_at AS VARCHAR)
+        "#
+    )
+}
+
+fn entity_alias_select_sql() -> String {
+    format!(
+        "SELECT {} FROM entity_aliases",
+        entity_alias_columns("entity_aliases")
+    )
+}
+
+fn external_identity_review_select_sql() -> &'static str {
+    r#"
+    SELECT
+        CAST(review_id AS VARCHAR),
+        CAST(link_id AS VARCHAR),
+        CAST(source_record_id AS VARCHAR),
+        CAST(entity_id AS VARCHAR),
+        proposed_relationship_type,
+        decision,
+        match_method,
+        match_confidence,
+        evidence_json,
+        review_note,
+        reviewer,
+        CAST(reviewed_at AS VARCHAR),
+        CAST(created_at AS VARCHAR)
+    FROM external_identity_reviews
     "#
 }
 
@@ -1353,6 +1874,160 @@ fn read_source_record_entity_link(row: &duckdb::Row<'_>) -> duckdb::Result<Sourc
     })
 }
 
+struct RawEntityAlias {
+    entity_alias_id: String,
+    entity_id: String,
+    alias: String,
+    normalized_alias: String,
+    source_scope: String,
+    provenance: String,
+    is_ambiguous: bool,
+    context_terms_json: Option<String>,
+    status: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl TryFrom<RawEntityAlias> for EntityAlias {
+    type Error = String;
+
+    fn try_from(raw: RawEntityAlias) -> Result<Self, Self::Error> {
+        Ok(Self {
+            entity_alias_id: raw.entity_alias_id,
+            entity_id: raw.entity_id,
+            alias: raw.alias,
+            normalized_alias: raw.normalized_alias,
+            source_scope: AliasSourceScope::parse(&raw.source_scope)?,
+            provenance: AliasProvenance::parse(&raw.provenance)?,
+            is_ambiguous: raw.is_ambiguous,
+            context_terms_json: raw.context_terms_json,
+            status: AliasStatus::parse(&raw.status)?,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+        })
+    }
+}
+
+fn read_raw_entity_alias(row: &duckdb::Row<'_>) -> duckdb::Result<RawEntityAlias> {
+    Ok(RawEntityAlias {
+        entity_alias_id: row.get(0)?,
+        entity_id: row.get(1)?,
+        alias: row.get(2)?,
+        normalized_alias: row.get(3)?,
+        source_scope: row.get(4)?,
+        provenance: row.get(5)?,
+        is_ambiguous: row.get(6)?,
+        context_terms_json: row.get(7)?,
+        status: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+struct RawAliasEntityMatch {
+    alias: RawEntityAlias,
+    entity: RawCanonicalEntity,
+}
+
+impl TryFrom<RawAliasEntityMatch> for AliasEntityMatch {
+    type Error = String;
+
+    fn try_from(raw: RawAliasEntityMatch) -> Result<Self, Self::Error> {
+        Ok(Self {
+            entity: raw.entity.try_into()?,
+            alias: raw.alias.try_into()?,
+        })
+    }
+}
+
+fn read_alias_entity_match(row: &duckdb::Row<'_>) -> duckdb::Result<RawAliasEntityMatch> {
+    Ok(RawAliasEntityMatch {
+        alias: RawEntityAlias {
+            entity_alias_id: row.get(0)?,
+            entity_id: row.get(1)?,
+            alias: row.get(2)?,
+            normalized_alias: row.get(3)?,
+            source_scope: row.get(4)?,
+            provenance: row.get(5)?,
+            is_ambiguous: row.get(6)?,
+            context_terms_json: row.get(7)?,
+            status: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+        },
+        entity: RawCanonicalEntity {
+            entity_id: row.get(11)?,
+            canonical_name: row.get(12)?,
+            normalized_name: row.get(13)?,
+            primary_type: row.get(14)?,
+            status: row.get(15)?,
+            description: row.get(16)?,
+            primary_website: row.get(17)?,
+            primary_repository: row.get(18)?,
+            created_at: row.get(19)?,
+            updated_at: row.get(20)?,
+        },
+    })
+}
+
+struct RawExternalIdentityReview {
+    review_id: String,
+    link_id: String,
+    source_record_id: String,
+    entity_id: String,
+    proposed_relationship_type: String,
+    decision: String,
+    match_method: String,
+    match_confidence: Option<f64>,
+    evidence_json: Option<String>,
+    review_note: Option<String>,
+    reviewer: String,
+    reviewed_at: String,
+    created_at: String,
+}
+
+impl TryFrom<RawExternalIdentityReview> for ExternalIdentityReview {
+    type Error = String;
+
+    fn try_from(raw: RawExternalIdentityReview) -> Result<Self, Self::Error> {
+        Ok(Self {
+            review_id: raw.review_id,
+            link_id: raw.link_id,
+            source_record_id: raw.source_record_id,
+            entity_id: raw.entity_id,
+            proposed_relationship_type: RelationshipType::parse(&raw.proposed_relationship_type)?,
+            decision: ExternalIdentityDecision::parse(&raw.decision)?,
+            match_method: raw.match_method,
+            match_confidence: raw.match_confidence,
+            evidence_json: raw.evidence_json,
+            review_note: raw.review_note,
+            reviewer: raw.reviewer,
+            reviewed_at: raw.reviewed_at,
+            created_at: raw.created_at,
+        })
+    }
+}
+
+fn read_raw_external_identity_review(
+    row: &duckdb::Row<'_>,
+) -> duckdb::Result<RawExternalIdentityReview> {
+    Ok(RawExternalIdentityReview {
+        review_id: row.get(0)?,
+        link_id: row.get(1)?,
+        source_record_id: row.get(2)?,
+        entity_id: row.get(3)?,
+        proposed_relationship_type: row.get(4)?,
+        decision: row.get(5)?,
+        match_method: row.get(6)?,
+        match_confidence: row.get(7)?,
+        evidence_json: row.get(8)?,
+        review_note: row.get(9)?,
+        reviewer: row.get(10)?,
+        reviewed_at: row.get(11)?,
+        created_at: row.get(12)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -1443,6 +2118,394 @@ mod tests {
             assert_eq!(matches.len(), 2);
             assert_ne!(matches[0].entity_id, matches[1].entity_id);
         });
+    }
+
+    #[test]
+    fn aliases_allow_collisions_and_source_aware_lookup_returns_all_candidates() {
+        with_repository("alias-collisions", |repository| {
+            let first = repository
+                .create_canonical_entity(&test_entity("Pilot One", PrimaryEntityType::AgentTool))
+                .expect("first entity should insert");
+            let second = repository
+                .create_canonical_entity(&test_entity("Pilot Two", PrimaryEntityType::SkillMode))
+                .expect("second entity should insert");
+            for entity in [&first, &second] {
+                repository
+                    .create_entity_alias(&NewEntityAlias {
+                        entity_id: entity.entity_id.clone(),
+                        alias: "Pilot".to_string(),
+                        source_scope: AliasSourceScope::Global,
+                        provenance: AliasProvenance::Manual,
+                        is_ambiguous: true,
+                        context_terms_json: Some(r#"["agent","mode"]"#.to_string()),
+                    })
+                    .expect("colliding alias should insert for each entity");
+            }
+
+            let matches = repository
+                .lookup_entities_by_normalized_alias(" PILOT ", AliasSourceScope::Threads)
+                .expect("ambiguous alias should resolve to candidates");
+            assert_eq!(matches.len(), 2);
+            assert!(matches.iter().all(|item| item.alias.is_ambiguous));
+            assert!(matches.iter().all(|item| {
+                item.alias.context_terms_json.as_deref() == Some(r#"["agent","mode"]"#)
+            }));
+        });
+    }
+
+    #[test]
+    fn source_scoped_alias_lookup_does_not_collapse_distinct_identities() {
+        with_repository("source-scoped-alias", |repository| {
+            let product = repository
+                .create_canonical_entity(&test_entity("Codex CLI", PrimaryEntityType::AgentTool))
+                .expect("product should insert");
+            let resource = repository
+                .create_canonical_entity(&test_entity(
+                    "Codex CLI MCP Server",
+                    PrimaryEntityType::ConnectorPlugin,
+                ))
+                .expect("resource should insert");
+            let global = repository
+                .create_entity_alias(&NewEntityAlias {
+                    entity_id: product.entity_id.clone(),
+                    alias: "Codex CLI".to_string(),
+                    source_scope: AliasSourceScope::Global,
+                    provenance: AliasProvenance::BootstrapYaml,
+                    is_ambiguous: true,
+                    context_terms_json: None,
+                })
+                .expect("global alias should insert");
+            repository
+                .create_entity_alias(&NewEntityAlias {
+                    entity_id: resource.entity_id.clone(),
+                    alias: "Codex CLI".to_string(),
+                    source_scope: AliasSourceScope::ExplainX,
+                    provenance: AliasProvenance::SourceReview,
+                    is_ambiguous: true,
+                    context_terms_json: Some(r#"["mcp","server"]"#.to_string()),
+                })
+                .expect("ExplainX alias should insert");
+
+            let explainx = repository
+                .lookup_entities_by_normalized_alias("Codex CLI", AliasSourceScope::ExplainX)
+                .expect("ExplainX lookup should load");
+            let threads = repository
+                .lookup_entities_by_normalized_alias("Codex CLI", AliasSourceScope::Threads)
+                .expect("Threads lookup should load");
+            assert_eq!(explainx.len(), 2);
+            assert_eq!(threads.len(), 1);
+            assert_eq!(threads[0].entity.entity_id, product.entity_id);
+
+            let archived = repository
+                .archive_entity_alias(&global.alias.entity_alias_id)
+                .expect("global alias should archive");
+            assert_eq!(archived.status, AliasStatus::Archived);
+            assert!(repository
+                .lookup_entities_by_normalized_alias("Codex CLI", AliasSourceScope::Threads)
+                .expect("archived lookup should load")
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn external_review_history_retains_ambiguous_then_approved_decisions() {
+        with_repository("review-history", |repository| {
+            let entity = repository
+                .create_canonical_entity(&test_entity("Headroom", PrimaryEntityType::AgentTool))
+                .expect("entity should insert");
+            let record = repository
+                .upsert_source_record(&test_record(
+                    ExternalSource::ExplainX,
+                    "tools/headroom",
+                    FIRST_SEEN,
+                ))
+                .expect("record should insert");
+            let link = repository
+                .create_source_record_entity_link(&test_link(
+                    &record.source_record_id,
+                    &entity.entity_id,
+                    RelationshipType::SameEntity,
+                    LinkReviewState::Pending,
+                ))
+                .expect("pending link should insert");
+
+            repository
+                .review_external_identity_link(&test_review(
+                    &link.link_id,
+                    RelationshipType::SameEntity,
+                    ExternalIdentityDecision::Ambiguous,
+                ))
+                .expect("ambiguous review should commit");
+            let approved = repository
+                .review_external_identity_link(&test_review(
+                    &link.link_id,
+                    RelationshipType::SameEntity,
+                    ExternalIdentityDecision::Approved,
+                ))
+                .expect("approval should commit");
+
+            let history = repository
+                .list_external_identity_reviews(&link.link_id)
+                .expect("review history should load");
+            assert_eq!(history.len(), 2);
+            assert_eq!(history[0].decision, ExternalIdentityDecision::Ambiguous);
+            assert_eq!(history[1].decision, ExternalIdentityDecision::Approved);
+            assert_eq!(
+                approved.effective_link.review_state,
+                LinkReviewState::Approved
+            );
+            assert_eq!(
+                repository
+                    .get_latest_external_identity_review(&link.link_id)
+                    .expect("latest review should load")
+                    .expect("latest review should exist")
+                    .decision,
+                ExternalIdentityDecision::Approved
+            );
+            assert_eq!(
+                repository
+                    .get_source_record(&record.source_record_id)
+                    .expect("record should load")
+                    .expect("record should exist")
+                    .resolution_state,
+                ResolutionState::SingleEntity
+            );
+        });
+    }
+
+    #[test]
+    fn external_review_transaction_rolls_back_audit_and_link_state() {
+        with_repository("review-rollback", |repository| {
+            let entity = repository
+                .create_canonical_entity(&test_entity("Graphify", PrimaryEntityType::AgentTool))
+                .expect("entity should insert");
+            let record = repository
+                .upsert_source_record(&test_record(
+                    ExternalSource::ExplainX,
+                    "tools/graphify",
+                    FIRST_SEEN,
+                ))
+                .expect("record should insert");
+            let link = repository
+                .create_source_record_entity_link(&test_link(
+                    &record.source_record_id,
+                    &entity.entity_id,
+                    RelationshipType::SameEntity,
+                    LinkReviewState::Pending,
+                ))
+                .expect("pending link should insert");
+
+            let failed =
+                repository.review_external_identity_link_with_forced_failure(&test_review(
+                    &link.link_id,
+                    RelationshipType::SameEntity,
+                    ExternalIdentityDecision::Approved,
+                ));
+            assert!(failed.is_err());
+            assert!(repository
+                .list_external_identity_reviews(&link.link_id)
+                .expect("review history should load")
+                .is_empty());
+            assert_eq!(
+                repository
+                    .get_source_record_entity_link(&link.link_id)
+                    .expect("link should load")
+                    .expect("link should exist")
+                    .review_state,
+                LinkReviewState::Pending
+            );
+        });
+    }
+
+    #[test]
+    fn rejected_same_name_and_approved_child_resource_remain_distinct() {
+        with_repository("review-relationship-safety", |repository| {
+            let codex = repository
+                .create_canonical_entity(&test_entity("Codex CLI", PrimaryEntityType::AgentTool))
+                .expect("Codex CLI should insert");
+            let codex_record = repository
+                .upsert_source_record(&test_record(
+                    ExternalSource::ExplainX,
+                    "mcp-servers/codex-cli",
+                    FIRST_SEEN,
+                ))
+                .expect("Codex resource should insert");
+            let codex_link = repository
+                .create_source_record_entity_link(&test_link(
+                    &codex_record.source_record_id,
+                    &codex.entity_id,
+                    RelationshipType::SameEntity,
+                    LinkReviewState::Pending,
+                ))
+                .expect("same-name proposal should insert");
+            let rejected = repository
+                .review_external_identity_link(&test_review(
+                    &codex_link.link_id,
+                    RelationshipType::SameEntity,
+                    ExternalIdentityDecision::Rejected,
+                ))
+                .expect("same-name proposal should reject");
+            assert_eq!(
+                rejected.effective_link.review_state,
+                LinkReviewState::Rejected
+            );
+            assert_eq!(
+                repository
+                    .get_source_record(&codex_record.source_record_id)
+                    .expect("record should load")
+                    .expect("record should exist")
+                    .resolution_state,
+                ResolutionState::Unresolved
+            );
+            assert_eq!(
+                repository
+                    .get_canonical_entity(&codex.entity_id)
+                    .expect("entity should load")
+                    .expect("entity should exist")
+                    .canonical_name,
+                "Codex CLI"
+            );
+
+            let cursor = repository
+                .create_canonical_entity(&test_entity("Cursor", PrimaryEntityType::AgentTool))
+                .expect("Cursor should insert");
+            let command = repository
+                .upsert_source_record(&test_record(
+                    ExternalSource::ExplainX,
+                    "slash-commands/cursor-model",
+                    FIRST_SEEN,
+                ))
+                .expect("command should insert");
+            let command_link = repository
+                .create_source_record_entity_link(&test_link(
+                    &command.source_record_id,
+                    &cursor.entity_id,
+                    RelationshipType::ChildResource,
+                    LinkReviewState::Pending,
+                ))
+                .expect("child proposal should insert");
+            let approved = repository
+                .review_external_identity_link(&test_review(
+                    &command_link.link_id,
+                    RelationshipType::ChildResource,
+                    ExternalIdentityDecision::Approved,
+                ))
+                .expect("child relation should approve");
+            assert_eq!(
+                approved.effective_link.relationship_type,
+                RelationshipType::ChildResource
+            );
+            assert_eq!(
+                approved.effective_link.review_state,
+                LinkReviewState::Approved
+            );
+            assert_ne!(command.source_record_id, cursor.entity_id);
+            assert_eq!(
+                repository
+                    .list_external_identity_reviews(&command_link.link_id)
+                    .expect("child history should load")
+                    .len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn editorial_record_supports_independently_reviewed_multiple_entities() {
+        with_repository("review-editorial", |repository| {
+            let article = repository
+                .upsert_source_record(&test_record(
+                    ExternalSource::ExplainX,
+                    "blog/top-10-agent-harnesses",
+                    FIRST_SEEN,
+                ))
+                .expect("article should insert");
+            for name in ["Claude Code", "Cursor", "OpenCode"] {
+                let entity = repository
+                    .create_canonical_entity(&test_entity(name, PrimaryEntityType::AgentTool))
+                    .expect("mentioned entity should insert");
+                let link = repository
+                    .create_source_record_entity_link(&test_link(
+                        &article.source_record_id,
+                        &entity.entity_id,
+                        RelationshipType::MentionedEntity,
+                        LinkReviewState::Pending,
+                    ))
+                    .expect("mentioned proposal should insert");
+                repository
+                    .review_external_identity_link(&test_review(
+                        &link.link_id,
+                        RelationshipType::MentionedEntity,
+                        ExternalIdentityDecision::Approved,
+                    ))
+                    .expect("mentioned relation should approve");
+                assert_eq!(
+                    repository
+                        .list_external_identity_reviews(&link.link_id)
+                        .expect("individual history should load")
+                        .len(),
+                    1
+                );
+            }
+            assert_eq!(
+                repository
+                    .get_source_record(&article.source_record_id)
+                    .expect("article should load")
+                    .expect("article should exist")
+                    .resolution_state,
+                ResolutionState::MultipleEntities
+            );
+            assert_eq!(
+                repository
+                    .get_links_for_source_record(&article.source_record_id)
+                    .expect("article links should load")
+                    .len(),
+                3
+            );
+        });
+    }
+
+    #[test]
+    fn imp01_database_upgrades_additively_without_data_loss() {
+        let path = test_database_path("imp01-upgrade");
+        cleanup_database_files(&path);
+        duckdb_service::initialize_imp01_schema_at(&path).expect("IMP-01 schema should initialize");
+        let connection = Connection::open(&path).expect("IMP-01 database should open");
+        connection
+            .execute(
+                "INSERT INTO threads_posts_raw (post_id, text) VALUES ('imp01-post', 'preserved')",
+                [],
+            )
+            .expect("legacy row should insert");
+        connection
+            .execute(
+                "INSERT INTO canonical_entities (canonical_name, normalized_name, primary_type) VALUES ('Preserved Entity', 'preserved entity', 'agent_tool')",
+                [],
+            )
+            .expect("IMP-01 entity should insert");
+        drop(connection);
+
+        let repository = MultiSourceRepository::open_at(&path).expect("IMP-02 should initialize");
+        assert_all_tables_exist(&path);
+        assert_eq!(
+            repository
+                .lookup_canonical_entities_by_normalized_name("Preserved Entity")
+                .expect("preserved entity should load")
+                .len(),
+            1
+        );
+        drop(repository);
+        let upgraded = Connection::open(&path).expect("upgraded database should open");
+        let post_count: i64 = upgraded
+            .query_row(
+                "SELECT COUNT(*) FROM threads_posts_raw WHERE post_id = 'imp01-post'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preserved post should remain");
+        assert_eq!(post_count, 1);
+        drop(upgraded);
+        cleanup_database_files(&path);
     }
 
     #[test]
@@ -1897,6 +2960,23 @@ mod tests {
         }
     }
 
+    fn test_review(
+        link_id: &str,
+        relationship_type: RelationshipType,
+        decision: ExternalIdentityDecision,
+    ) -> ExternalIdentityReviewRequest {
+        ExternalIdentityReviewRequest {
+            link_id: link_id.to_string(),
+            proposed_relationship_type: relationship_type,
+            decision,
+            match_method: "human_review".to_string(),
+            match_confidence: Some(0.95),
+            evidence_json: Some(r#"{"source":"test"}"#.to_string()),
+            review_note: Some("Reviewed in identity persistence test".to_string()),
+            reviewer: "human".to_string(),
+        }
+    }
+
     fn with_repository<F>(name: &str, test: F)
     where
         F: FnOnce(&MultiSourceRepository),
@@ -1933,6 +3013,8 @@ mod tests {
             "source_records",
             "source_observations",
             "source_record_entity_links",
+            "entity_aliases",
+            "external_identity_reviews",
         ] {
             let count: i64 = connection
                 .query_row(

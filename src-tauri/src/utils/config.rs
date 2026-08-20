@@ -3,6 +3,9 @@ use std::env;
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 use serde::Serialize;
 
 pub const DEFAULT_DATABASE_PATH: &str = "./data/app.duckdb";
@@ -13,6 +16,31 @@ pub const APP_ENV_ENV: &str = "APP_ENV";
 pub const DATABASE_PATH_ENV: &str = "DATABASE_PATH";
 
 static ENV_FILE_LOADED: OnceLock<bool> = OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_DATABASE_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct TestDatabasePathGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl Drop for TestDatabasePathGuard {
+    fn drop(&mut self) {
+        TEST_DATABASE_PATH.with(|path| {
+            path.replace(self.previous.take());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_database_path(path: PathBuf) -> TestDatabasePathGuard {
+    let previous = TEST_DATABASE_PATH.with(|current| current.replace(Some(path)));
+    TestDatabasePathGuard { previous }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EnvConfigStatus {
@@ -59,6 +87,13 @@ pub fn env_value_configured(key: &str) -> bool {
 }
 
 pub fn resolved_database_path() -> Result<PathBuf, String> {
+    #[cfg(test)]
+    if let Some(path) = TEST_DATABASE_PATH.with(|current| current.borrow().clone()) {
+        let resolved = normalize_path(&path);
+        validate_runtime_database_path(&resolved)?;
+        return Ok(resolved);
+    }
+
     load_env_files_once();
 
     let configured_path = env::var(DATABASE_PATH_ENV)

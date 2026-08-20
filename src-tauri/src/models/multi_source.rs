@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrimaryEntityType {
     AgentTool,
@@ -228,6 +230,127 @@ pub enum LinkReviewState {
     Ambiguous,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliasSourceScope {
+    Global,
+    Threads,
+    ExplainX,
+    GitHub,
+    HackerNews,
+    ProductHunt,
+}
+
+impl AliasSourceScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Threads => "threads",
+            Self::ExplainX => "explainx",
+            Self::GitHub => "github",
+            Self::HackerNews => "hacker_news",
+            Self::ProductHunt => "product_hunt",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "global" => Ok(Self::Global),
+            "threads" => Ok(Self::Threads),
+            "explainx" => Ok(Self::ExplainX),
+            "github" => Ok(Self::GitHub),
+            "hacker_news" => Ok(Self::HackerNews),
+            "product_hunt" => Ok(Self::ProductHunt),
+            _ => Err(format!("Unsupported entity alias source scope: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliasProvenance {
+    BootstrapYaml,
+    CandidateReview,
+    SourceReview,
+    Manual,
+}
+
+impl AliasProvenance {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BootstrapYaml => "bootstrap_yaml",
+            Self::CandidateReview => "candidate_review",
+            Self::SourceReview => "source_review",
+            Self::Manual => "manual",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "bootstrap_yaml" => Ok(Self::BootstrapYaml),
+            "candidate_review" => Ok(Self::CandidateReview),
+            "source_review" => Ok(Self::SourceReview),
+            "manual" => Ok(Self::Manual),
+            _ => Err(format!("Unsupported entity alias provenance: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliasStatus {
+    Active,
+    Archived,
+}
+
+impl AliasStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Archived => "archived",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "active" => Ok(Self::Active),
+            "archived" => Ok(Self::Archived),
+            _ => Err(format!("Unsupported entity alias status: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalIdentityDecision {
+    Approved,
+    Rejected,
+    Ambiguous,
+}
+
+impl ExternalIdentityDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Ambiguous => "ambiguous",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "approved" => Ok(Self::Approved),
+            "rejected" => Ok(Self::Rejected),
+            "ambiguous" => Ok(Self::Ambiguous),
+            _ => Err(format!("Unsupported external identity decision: {value}")),
+        }
+    }
+
+    pub const fn effective_link_state(self) -> LinkReviewState {
+        match self {
+            Self::Approved => LinkReviewState::Approved,
+            Self::Rejected => LinkReviewState::Rejected,
+            Self::Ambiguous => LinkReviewState::Ambiguous,
+        }
+    }
+}
+
 impl LinkReviewState {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -414,6 +537,92 @@ pub struct SourceRecordEntityLink {
     pub reviewed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewEntityAlias {
+    pub entity_id: String,
+    pub alias: String,
+    pub source_scope: AliasSourceScope,
+    pub provenance: AliasProvenance,
+    pub is_ambiguous: bool,
+    pub context_terms_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityAlias {
+    pub entity_alias_id: String,
+    pub entity_id: String,
+    pub alias: String,
+    pub normalized_alias: String,
+    pub source_scope: AliasSourceScope,
+    pub provenance: AliasProvenance,
+    pub is_ambiguous: bool,
+    pub context_terms_json: Option<String>,
+    pub status: AliasStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateEntityAliasResult {
+    pub alias: EntityAlias,
+    pub inserted: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AliasEntityMatch {
+    pub entity: CanonicalEntity,
+    pub alias: EntityAlias,
+}
+
+#[derive(Debug, Clone)]
+pub struct AliasBootstrapResult {
+    pub configured_entities: usize,
+    pub entities_created: usize,
+    pub entities_reused: usize,
+    pub entity_conflicts: usize,
+    pub aliases_created: usize,
+    pub aliases_existing: usize,
+    pub ambiguous_aliases: usize,
+    pub skipped_entities: usize,
+    pub type_mapping_counts: BTreeMap<String, usize>,
+    pub skipped_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalIdentityReviewRequest {
+    pub link_id: String,
+    pub proposed_relationship_type: RelationshipType,
+    pub decision: ExternalIdentityDecision,
+    pub match_method: String,
+    pub match_confidence: Option<f64>,
+    pub evidence_json: Option<String>,
+    pub review_note: Option<String>,
+    pub reviewer: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalIdentityReview {
+    pub review_id: String,
+    pub link_id: String,
+    pub source_record_id: String,
+    pub entity_id: String,
+    pub proposed_relationship_type: RelationshipType,
+    pub decision: ExternalIdentityDecision,
+    pub match_method: String,
+    pub match_confidence: Option<f64>,
+    pub evidence_json: Option<String>,
+    pub review_note: Option<String>,
+    pub reviewer: String,
+    pub reviewed_at: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalIdentityReviewResult {
+    pub review: ExternalIdentityReview,
+    pub effective_link: SourceRecordEntityLink,
 }
 
 pub fn normalize_entity_name(value: &str) -> String {

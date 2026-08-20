@@ -57,7 +57,8 @@ mod tests {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-raw-insert-schema-regression.duckdb");
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
 
         duckdb_service::initialize_database().expect("schema initialization should succeed");
         let saved_count = duckdb_service::save_threads_raw_posts(&[ThreadPostRaw {
@@ -104,7 +105,8 @@ mod tests {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-weekly-canonical-test.duckdb");
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
 
         duckdb_service::initialize_database().expect("schema initialization should succeed");
         duckdb_service::save_threads_raw_posts(&[
@@ -153,7 +155,8 @@ mod tests {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-latest-week-ranking-test.duckdb");
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
 
         duckdb_service::initialize_database().expect("schema initialization should succeed");
         let posts = [
@@ -194,7 +197,8 @@ mod tests {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-reset-demo-data-test.duckdb");
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
 
         duckdb_service::initialize_database().expect("schema initialization should succeed");
         duckdb_service::save_threads_raw_posts(&[test_raw_post(
@@ -250,7 +254,8 @@ mod tests {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-legacy-compat-cleanup-test.duckdb");
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
 
         let connection = Connection::open(&database_path)
             .expect("legacy compatibility test database should open");
@@ -291,7 +296,8 @@ mod tests {
     fn validates_sample_full_mvp_flow() {
         let database_path = temp_database_path();
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
         std::env::set_var("THREADS_ACCESS_TOKEN", "");
         std::env::set_var("THREADS_MOCK_ID_ONLY_DETAIL", "1");
 
@@ -557,7 +563,8 @@ mod tests {
         let database_path =
             std::env::temp_dir().join("ai-agent-trend-radar-real-discovery-smoke.duckdb");
         cleanup_database_files(&database_path);
-        std::env::set_var("DATABASE_PATH", database_path.to_string_lossy().as_ref());
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
         std::env::remove_var("THREADS_MOCK_ID_ONLY_DETAIL");
 
         let discovery_result = discovery_crawler::run_discovery_crawl(

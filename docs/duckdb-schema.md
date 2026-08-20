@@ -219,10 +219,43 @@ Reviewed many-to-many relationships between external records and canonical entit
 
 Service-level validation allows no-product and unresolved records while preventing an approved link from being attached to a record currently classified as `no_product_entity`.
 
+## Entity Identity Persistence
+
+The IMP-02 identity tables are additive and are not connected to Tauri commands, UI, collectors, detector output, or weekly metrics. `config/aliases.yml` remains the deterministic entity-detector input.
+
+### entity_aliases
+
+Durable aliases for canonical entities with their origin and matching context.
+
+- Primary key: `entity_alias_id` UUID.
+- Foreign key: `entity_id` references `canonical_entities`.
+- Uniqueness: `(entity_id, normalized_alias, source_scope)`. `normalized_alias` is intentionally not globally unique.
+- Source scopes: `global`, `threads`, `explainx`, `github`, `hacker_news`, and `product_hunt`.
+- Provenance values: `bootstrap_yaml`, `candidate_review`, `source_review`, and `manual`.
+- `is_ambiguous` and optional `context_terms_json` preserve contextual disambiguation requirements.
+- Status values are `active` and `archived`; lookup returns active aliases and may return multiple candidate entities.
+
+The explicit curated bootstrap reads the real `config/aliases.yml`, creates a canonical entity only when no normalized-name candidate exists, reuses exactly one candidate, and abstains when multiple candidates exist. It is idempotent and is not run during database initialization.
+
+### external_identity_reviews
+
+Append-only service-level history of explicit decisions about a `source_record_entity_links` relation.
+
+- Primary key: `review_id` UUID.
+- Each row snapshots `link_id`, `source_record_id`, `entity_id`, proposed relationship, match evidence, reviewer, and timestamps.
+- Decisions are `approved`, `rejected`, or `ambiguous`; pending is represented only by the effective link state.
+- Repository operations expose append and chronological read only. Existing audit rows are never updated by the review service.
+- Audit insertion, effective link update, review timestamp, and source-record resolution reconciliation occur in one DuckDB transaction.
+- Confidence remains diagnostic and never auto-approves a relationship.
+
+DuckDB currently rejects updates to a parent row referenced by a foreign key, even when the parent key itself is unchanged. Because the review transaction must append an audit row before updating the effective link and source-record resolution, this audit table intentionally has no database foreign-key constraints. The repository first loads the link and copies its link, source-record, and entity IDs inside the same transaction, preserving referential integrity at the service boundary. The `entity_aliases` foreign key is unaffected.
+
 ## Assumptions
 
 - Raw, normalized, and aggregated data stay separate for auditability.
 - External source records, observations, and canonical identities remain separate from social post storage.
+- Persistent aliases coexist with YAML detector configuration; they do not replace detector reads.
+- Candidate Review (`entity_review_decisions`) and external source identity review (`external_identity_reviews`) answer different questions and remain separate.
 - Schema initialization uses `CREATE TABLE IF NOT EXISTS` for MVP.
 - Schema initialization uses additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migrations. If a real legacy `agent_mentions_compatible` table or view is present, initialization removes that compatibility object before applying the current schema.
 - Phantom compatibility metadata that DuckDB does not expose as a real object is never repaired by deleting the database automatically. Local demo reset returns a friendly local-only cleanup instruction instead.

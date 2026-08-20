@@ -1,38 +1,38 @@
 # Latest Handoff
 
-Date: 2026-08-18
-Session: 043-multi-source-foundation
+Date: 2026-08-20
+Session: 044-entity-identity-persistence
 Agent: Codex
 
 ## Current State
 
-The additive Phase A multi-source persistence foundation is implemented on `feature/multi-source-foundation`. The existing Threads/Apify/Candidate Review/classification/weekly/export pipeline remains name-based and unchanged.
+IMP-01 is checkpointed at `bc4d57c`. IMP-02 and its parallel DuckDB test-isolation fix are validated on `feature/entity-identity-persistence` and ready for a local checkpoint commit.
 
 ## Key Changes
 
-- Added canonical entities with opaque DuckDB UUID identity.
-- Added collection runs, durable source records, append-oriented observations, and reviewed source/entity links.
-- Added typed Rust validation and a dedicated repository service.
-- Added atomic record/observation/counter persistence and same-run observation idempotency.
-- Added focused new/legacy database and identity-safety coverage.
+- Added scoped, provenance-aware persistent canonical aliases without making normalized alias globally unique.
+- Added an explicit, idempotent bootstrap from the real `config/aliases.yml`; YAML remains the active detector input.
+- Added append-only external identity review history and transactional effective-link updates.
+- Added safety coverage for collisions, source scope, reversals, rollback, same-name rejection, child resources, editorial multi-entity records, and additive database upgrades.
+- Replaced test-time global `DATABASE_PATH` mutation with scoped thread-local database overrides.
 
 ## Validation Snapshot
 
-- Focused multi-source suite: 11 passed, 0 failed.
-- New and representative legacy databases initialize with all existing and new tables.
-- Legacy Threads rows survive additive initialization.
-- Frontend build, Rust format/check, and diff validation passed.
-- Full Rust suite: 64 passed, 0 failed, 1 live-network test ignored.
+- Bootstrap first run: 26 canonical entities, 63 aliases, 16 ambiguous aliases, 0 skipped.
+- Bootstrap second run: 0 new entities, 0 new aliases.
+- Default-parallel Rust suite passed twice: 72 passed, 0 failed, 1 live-network test ignored.
+- Serial Rust suite: 72 passed, 0 failed, 1 live-network test ignored.
+- Existing Threads, Candidate Review, classifier, weekly, and export behavior remains unchanged.
 
 ## Pending
 
-- Do not implement an ExplainX collector yet.
-- Next architecture phase should add persistent aliases and external identity-review audit history.
-- Do not push or merge until explicitly requested.
+- Create the approved local IMP-02 checkpoint commit; do not push.
+- Do not merge or start ExplainX ingestion until explicitly approved.
+- A future IMP-03 may evaluate `agent_mentions.entity_id`; it is not part of this implementation.
 
 ## Risk Note
 
-The new repository API is intentionally not connected to Tauri commands or UI. External identity decisions currently have an effective state on link rows but no append-only audit table yet.
+DuckDB's parent-update foreign-key limitation prevents an audit row from referencing a link before that link's effective state is updated. Audit referential integrity is therefore enforced by the atomic repository transaction rather than audit-table foreign keys.
 
 ## Token Usage
 
