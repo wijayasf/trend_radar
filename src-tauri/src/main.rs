@@ -26,6 +26,7 @@ fn main() {
             commands::threads::collect_threads_by_keyword,
             commands::threads::import_sample_threads_posts,
             commands::entities::detect_agent_mentions,
+            commands::entities::link_agent_mentions_to_entities,
             commands::regions::classify_regions,
             commands::sentiments::classify_sentiments,
             commands::costs::classify_cost_signals,
@@ -49,7 +50,8 @@ mod tests {
     use crate::models::threads::ThreadPostRaw;
     use crate::services::{
         candidate_review, cost_classifier, discovery_crawler, duckdb_service, entity_detector,
-        region_classifier, report_exporter, sentiment_classifier, weekly_aggregator,
+        identity_linker, region_classifier, report_exporter, sentiment_classifier,
+        weekly_aggregator,
     };
 
     #[test]
@@ -96,6 +98,172 @@ mod tests {
             .preview
             .iter()
             .any(|mention| mention.agent_name == "NovaForge"));
+
+        cleanup_database_files(&database_path);
+    }
+
+    #[test]
+    fn validates_mention_identity_linkage_preserves_mvp_fields_and_weekly_metrics() {
+        let database_path = std::env::temp_dir()
+            .join("ai-agent-trend-radar-mention-identity-linkage-integration.duckdb");
+        cleanup_database_files(&database_path);
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
+
+        duckdb_service::initialize_database().expect("schema initialization should succeed");
+        duckdb_service::save_threads_raw_posts(&[test_raw_post(
+            "identity-link-1",
+            "claude-code helps with coding workflows.",
+            "2026-07-13T09:00:00Z",
+        )])
+        .expect("raw post should save");
+        let mention = test_mention("identity-link-1", "claude-code", "coding_agent");
+        duckdb_service::save_agent_mentions(std::slice::from_ref(&mention))
+            .expect("legacy mention should save");
+
+        let before_fields = load_non_identity_mention_fields(&database_path, &mention.mention_id);
+        let before_weekly = weekly_aggregator::aggregate_weekly_metrics()
+            .expect("baseline weekly metrics should aggregate");
+
+        let linkage = identity_linker::link_agent_mentions_to_entities()
+            .expect("mention identity linkage should succeed");
+        assert_eq!(linkage.resolved_count, 1);
+        assert_eq!(linkage.missing_alias_count, 0);
+        assert_eq!(linkage.ambiguous_count, 0);
+
+        let connection = Connection::open(&database_path).expect("identity database should open");
+        let identity: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<f64>,
+            bool,
+        ) = connection
+            .query_row(
+                r#"
+                    SELECT
+                        CAST(entity_id AS VARCHAR),
+                        identity_resolution_status,
+                        identity_resolution_reason,
+                        identity_resolution_confidence,
+                        identity_resolved_at IS NOT NULL
+                    FROM agent_mentions
+                    WHERE mention_id = ?1
+                    "#,
+                [&mention.mention_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .expect("identity fields should be readable");
+        drop(connection);
+        assert!(identity.0.is_some());
+        assert_eq!(identity.1.as_deref(), Some("resolved"));
+        assert!(identity
+            .2
+            .as_deref()
+            .is_some_and(|reason| reason.contains("claude-code")));
+        assert_eq!(identity.3, Some(1.0));
+        assert!(identity.4);
+        assert_eq!(
+            load_non_identity_mention_fields(&database_path, &mention.mention_id),
+            before_fields
+        );
+
+        let after_weekly = weekly_aggregator::aggregate_weekly_metrics()
+            .expect("weekly metrics should remain compatible after linkage");
+        assert_eq!(after_weekly.metrics_count, before_weekly.metrics_count);
+        assert_eq!(after_weekly.global_count, before_weekly.global_count);
+        assert_eq!(after_weekly.top_global[0].agent_name, "claude-code");
+        assert_eq!(
+            after_weekly.top_global[0].trend_score,
+            before_weekly.top_global[0].trend_score
+        );
+
+        duckdb_service::save_agent_mentions(&[mention.clone()])
+            .expect("mention upsert should preserve linked identity");
+        let connection = Connection::open(&database_path).expect("identity database should reopen");
+        let preserved_status: Option<String> = connection
+            .query_row(
+                "SELECT identity_resolution_status FROM agent_mentions WHERE mention_id = ?1",
+                [&mention.mention_id],
+                |row| row.get(0),
+            )
+            .expect("preserved identity status should be readable");
+        assert_eq!(preserved_status.as_deref(), Some("resolved"));
+        drop(connection);
+
+        cleanup_database_files(&database_path);
+    }
+
+    #[test]
+    fn validates_existing_mentions_survive_identity_column_migration() {
+        let database_path = std::env::temp_dir()
+            .join("ai-agent-trend-radar-mention-identity-migration-compatibility.duckdb");
+        cleanup_database_files(&database_path);
+        let _database_path_guard =
+            crate::utils::config::set_test_database_path(database_path.clone());
+
+        duckdb_service::initialize_database().expect("baseline schema should initialize");
+        duckdb_service::save_threads_raw_posts(&[test_raw_post(
+            "identity-migration-1",
+            "Claude Code remains available after an additive migration.",
+            "2026-07-13T09:00:00Z",
+        )])
+        .expect("legacy raw post should save");
+        let mention = test_mention("identity-migration-1", "Claude Code", "coding_agent");
+        duckdb_service::save_agent_mentions(std::slice::from_ref(&mention))
+            .expect("legacy mention should save");
+        let before_fields = load_non_identity_mention_fields(&database_path, &mention.mention_id);
+
+        let connection = Connection::open(&database_path).expect("legacy database should open");
+        connection
+            .execute_batch(
+                r#"
+                DROP INDEX IF EXISTS idx_agent_mentions_agent_region;
+                ALTER TABLE agent_mentions DROP COLUMN entity_id;
+                ALTER TABLE agent_mentions DROP COLUMN identity_resolution_status;
+                ALTER TABLE agent_mentions DROP COLUMN identity_resolution_reason;
+                ALTER TABLE agent_mentions DROP COLUMN identity_resolution_confidence;
+                ALTER TABLE agent_mentions DROP COLUMN identity_resolved_at;
+                "#,
+            )
+            .expect("test should recreate the pre-IMP-03 mention shape");
+        drop(connection);
+
+        duckdb_service::initialize_database()
+            .expect("additive identity migration should initialize legacy database");
+        assert_eq!(
+            load_non_identity_mention_fields(&database_path, &mention.mention_id),
+            before_fields
+        );
+        let connection = Connection::open(&database_path).expect("migrated database should open");
+        let identity_columns: i64 = connection
+            .query_row(
+                r#"
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_name = 'agent_mentions'
+                    AND column_name IN (
+                        'entity_id',
+                        'identity_resolution_status',
+                        'identity_resolution_reason',
+                        'identity_resolution_confidence',
+                        'identity_resolved_at'
+                    )
+                "#,
+                [],
+                |row| row.get(0),
+            )
+            .expect("identity migration columns should be readable");
+        assert_eq!(identity_columns, 5);
+        drop(connection);
 
         cleanup_database_files(&database_path);
     }
@@ -697,6 +865,42 @@ mod tests {
             cost_signal: "not_mentioned".to_string(),
             source_snippet: format!("{agent_name} appears in AI agent workflow notes."),
         }
+    }
+
+    fn load_non_identity_mention_fields(
+        database_path: &PathBuf,
+        mention_id: &str,
+    ) -> (String, String, String, String, String, f64, String) {
+        let connection =
+            Connection::open(database_path).expect("mention database should open for inspection");
+        connection
+            .query_row(
+                r#"
+                SELECT
+                    post_id,
+                    agent_name,
+                    agent_alias,
+                    category,
+                    region,
+                    match_confidence,
+                    source_snippet
+                FROM agent_mentions
+                WHERE mention_id = ?1
+                "#,
+                [mention_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .expect("non-identity mention fields should be readable")
     }
 
     fn cleanup_database_files(database_path: &PathBuf) {

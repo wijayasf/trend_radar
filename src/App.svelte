@@ -121,6 +121,14 @@
   let savedMentions = 0;
   let isDetecting = false;
   let detectionPreview: AgentMentionPreview[] = [];
+  let identityLinkageStatus = 'Idle';
+  let identityResolvedCount = 0;
+  let identityMissingAliasCount = 0;
+  let identityAmbiguousCount = 0;
+  let identitySkippedCount = 0;
+  let identityErrorCount = 0;
+  let identityLinkagePreview: MentionIdentityLinkagePreview[] = [];
+  let isLinkingIdentities = false;
   let regionStatus = 'Idle';
   let regionPostsAnalyzed = 0;
   let indonesiaCount = 0;
@@ -332,6 +340,23 @@
     saved_count: number;
     message: string;
     preview: AgentMentionPreview[];
+  };
+
+  type MentionIdentityLinkagePreview = {
+    mention_name: string;
+    resolution_status: string;
+    canonical_entity_name: string;
+    reason: string;
+  };
+
+  type MentionIdentityLinkageResult = {
+    resolved_count: number;
+    missing_alias_count: number;
+    ambiguous_count: number;
+    skipped_count: number;
+    error_count: number;
+    message: string;
+    preview: MentionIdentityLinkagePreview[];
   };
 
   type SentimentClassificationResult = {
@@ -683,6 +708,13 @@
       mentionsFound = 0;
       savedMentions = 0;
       detectionPreview = [];
+      identityLinkageStatus = 'Idle';
+      identityResolvedCount = 0;
+      identityMissingAliasCount = 0;
+      identityAmbiguousCount = 0;
+      identitySkippedCount = 0;
+      identityErrorCount = 0;
+      identityLinkagePreview = [];
       regionPostsAnalyzed = 0;
       indonesiaCount = 0;
       globalCount = 0;
@@ -1095,6 +1127,36 @@
       detectStatus = `error: ${friendlyError(error)}`;
     } finally {
       isDetecting = false;
+    }
+  }
+
+  async function linkAgentMentionsToEntities() {
+    if (isLinkingIdentities) return;
+
+    isLinkingIdentities = true;
+    identityLinkageStatus = 'Linking mentions to canonical entities...';
+    identityResolvedCount = 0;
+    identityMissingAliasCount = 0;
+    identityAmbiguousCount = 0;
+    identitySkippedCount = 0;
+    identityErrorCount = 0;
+    identityLinkagePreview = [];
+
+    try {
+      const result = await invoke<MentionIdentityLinkageResult>(
+        'link_agent_mentions_to_entities',
+      );
+      identityResolvedCount = result.resolved_count;
+      identityMissingAliasCount = result.missing_alias_count;
+      identityAmbiguousCount = result.ambiguous_count;
+      identitySkippedCount = result.skipped_count;
+      identityErrorCount = result.error_count;
+      identityLinkagePreview = result.preview;
+      identityLinkageStatus = result.message;
+    } catch (error) {
+      identityLinkageStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isLinkingIdentities = false;
     }
   }
 
@@ -1799,6 +1861,56 @@
               </div>
               <p>{mention.source_snippet}</p>
               <span class="confidence">{Math.round(mention.confidence * 100)}%</span>
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="detector-panel" aria-label="Mention identity linkage">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">2. Identity Linkage</p>
+          <h2>Link mentions to canonical entities</h2>
+          <p class="panel-note">
+            Resolve detected names through active, source-aware aliases while preserving the
+            original mention text.
+          </p>
+        </div>
+        <button
+          type="button"
+          on:click={linkAgentMentionsToEntities}
+          disabled={isLinkingIdentities || isFullFlowRunning()}
+        >
+          {#if isLinkingIdentities}
+            {@render LoadingLabel('Linking...')}
+          {:else}
+            Link Mentions to Canonical Entities
+          {/if}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {identityLinkageStatus}</span>
+        <span>Resolved: {identityResolvedCount}</span>
+        <span>Missing alias: {identityMissingAliasCount}</span>
+        <span>Ambiguous: {identityAmbiguousCount}</span>
+        <span>Skipped: {identitySkippedCount}</span>
+        <span>Errors: {identityErrorCount}</span>
+      </div>
+
+      {#if identityLinkagePreview.length > 0}
+        <div class="mention-preview" aria-label="Identity linkage preview">
+          {#each identityLinkagePreview as item}
+            <article class="mention-row">
+              <div>
+                <strong>{item.mention_name}</strong>
+                <span>{item.resolution_status}</span>
+                {#if item.canonical_entity_name}
+                  <span>Canonical: {item.canonical_entity_name}</span>
+                {/if}
+              </div>
+              <p>{item.reason}</p>
             </article>
           {/each}
         </div>

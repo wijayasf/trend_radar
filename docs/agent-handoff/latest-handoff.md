@@ -1,43 +1,44 @@
 # Latest Handoff
 
 Date: 2026-08-20
-Session: 044-entity-identity-persistence
+Session: 045-mention-identity-linkage
 Agent: Codex
 
 ## Current State
 
-IMP-01 is checkpointed at `bc4d57c`. IMP-02 and its parallel DuckDB test-isolation fix are validated on `feature/entity-identity-persistence` and ready for a local checkpoint commit.
+IMP-01 is checkpointed at `bc4d57c` and IMP-02 at `e952bf1` on `feature/entity-identity-persistence`. IMP-03 adds explicit mention-to-canonical linkage, has passed its full local validation gate, and is packaged as the current local checkpoint.
 
 ## Key Changes
 
-- Added scoped, provenance-aware persistent canonical aliases without making normalized alias globally unique.
-- Added an explicit, idempotent bootstrap from the real `config/aliases.yml`; YAML remains the active detector input.
-- Added append-only external identity review history and transactional effective-link updates.
-- Added safety coverage for collisions, source scope, reversals, rollback, same-name rejection, child resources, editorial multi-entity records, and additive database upgrades.
-- Replaced test-time global `DATABASE_PATH` mutation with scoped thread-local database overrides.
+- Added five nullable identity fields to `agent_mentions` through additive initialization.
+- Added a deterministic resolver that prefers source-scoped active aliases over global aliases, abstains on collisions, and requires context for ambiguous aliases.
+- Added the `link_agent_mentions_to_entities` service/command and a focused Identity Linkage UI panel.
+- Preserved original mention names, classification fields, Candidate Review behavior, and weekly score/name behavior.
+- Preserved linked identity fields across detector `INSERT OR REPLACE` upserts.
 
 ## Validation Snapshot
 
-- Bootstrap first run: 26 canonical entities, 63 aliases, 16 ambiguous aliases, 0 skipped.
-- Bootstrap second run: 0 new entities, 0 new aliases.
-- Default-parallel Rust suite passed twice: 72 passed, 0 failed, 1 live-network test ignored.
-- Serial Rust suite: 72 passed, 0 failed, 1 live-network test ignored.
-- Existing Threads, Candidate Review, classifier, weekly, and export behavior remains unchanged.
+- Known alias, alias variant, source-scope preference, ambiguous alias, and missing alias resolver tests pass.
+- Additive migration preserves existing mention rows.
+- End-to-end linkage updates only identity fields, survives a later mention upsert, and leaves weekly metrics unchanged.
+- Frontend production build, Rust format/check, and diff validation pass.
+- Default-parallel and serial Rust suites each pass with 77 tests passed, 0 failed, and 1 live-network test ignored.
+- Secret-pattern scan found no real secret values; no live Threads or Apify call ran.
 
 ## Pending
 
-- Create the approved local IMP-02 checkpoint commit; do not push.
-- Do not merge or start ExplainX ingestion until explicitly approved.
-- A future IMP-03 may evaluate `agent_mentions.entity_id`; it is not part of this implementation.
+- Review the local IMP-03 checkpoint; do not push it yet.
+- Do not push.
+- Do not start ExplainX ingestion, canonical weekly aggregation, or scoring work until IMP-03 is reviewed.
 
 ## Risk Note
 
-DuckDB's parent-update foreign-key limitation prevents an audit row from referencing a link before that link's effective state is updated. Audit referential integrity is therefore enforced by the atomic repository transaction rather than audit-table foreign keys.
+Ambiguous aliases deliberately remain unresolved without configured context evidence. Weekly reports are still string-based because IMP-03 stores canonical identity but does not consume it in aggregation.
 
 ## Token Usage
 
 - Start: Unknown
 - Used: Estimated
 - Remaining: Unknown
-- Source: Codex goal metadata unavailable
+- Source: Codex runtime token accounting unavailable
 - Accuracy: Low

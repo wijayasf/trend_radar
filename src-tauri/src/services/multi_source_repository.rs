@@ -291,6 +291,29 @@ impl MultiSourceRepository {
         Ok(matches)
     }
 
+    pub fn has_inactive_alias(
+        &self,
+        alias: &str,
+        source_scope: AliasSourceScope,
+    ) -> Result<bool, String> {
+        let normalized_alias = normalize_entity_name(alias);
+        validate_non_empty("normalized alias", &normalized_alias)?;
+        self.connection
+            .query_row(
+                r#"
+                SELECT COUNT(*) > 0
+                FROM entity_aliases aliases
+                JOIN canonical_entities entities ON entities.entity_id = aliases.entity_id
+                WHERE aliases.normalized_alias = ?1
+                    AND aliases.source_scope IN ('global', ?2)
+                    AND (aliases.status != 'active' OR entities.status != 'active')
+                "#,
+                params![normalized_alias, source_scope.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("DuckDB inactive entity alias lookup failed: {error}"))
+    }
+
     pub fn archive_entity_alias(&self, entity_alias_id: &str) -> Result<EntityAlias, String> {
         validate_non_empty("entity alias ID", entity_alias_id)?;
         let updated = self

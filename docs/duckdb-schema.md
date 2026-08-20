@@ -6,7 +6,7 @@ This is the MVP local storage boundary for AI Agent Trend Radar. It is intention
 
 - `threads_posts_raw` stores raw Threads post records and source metadata.
 - `crawl_runs` stores summary diagnostics for discovery crawl runs.
-- `agent_mentions` stores normalized AI agent/tool mentions detected inside raw posts.
+- `agent_mentions` stores normalized AI agent/tool mentions and optional canonical identity linkage.
 - `entity_review_decisions` stores durable approve/ignore decisions for unknown candidates.
 - `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
 - `canonical_entities` stores opaque, source-independent AI technology identities.
@@ -85,6 +85,11 @@ Normalized entity extraction results derived from raw posts.
 - `reviewed_category`: Optional approved category assigned during candidate approval.
 - `review_note`: Optional local reviewer note.
 - `reviewed_at`: Local timestamp for the latest review action.
+- `entity_id`: Nullable UUID of the resolved `canonical_entities` row. This is validated by the linkage service rather than a DuckDB foreign key so legacy rows and updates remain safe.
+- `identity_resolution_status`: Nullable linkage state: `resolved`, `unresolved`, `ambiguous`, `missing_alias`, or `skipped`.
+- `identity_resolution_reason`: Explainable alias lookup or abstention reason.
+- `identity_resolution_confidence`: Deterministic linkage confidence between 0 and 1.
+- `identity_resolved_at`: Timestamp set only when the current linkage status is `resolved`.
 - `region`: `indonesia`, `global`, or `unknown`.
 - `region_confidence`: Rule-based classifier confidence copied from the source post classification.
 - `region_reason`: Short explainable reason copied from the source post classification.
@@ -154,7 +159,7 @@ The score formula should move to `config/scoring.yml` when the ranking design st
 
 ## Multi-Source Foundation
 
-The Phase A multi-source tables are additive. They do not replace `threads_posts_raw`, add canonical IDs to `agent_mentions`, or change weekly aggregation.
+The Phase A multi-source tables are additive. They do not replace `threads_posts_raw` or change weekly aggregation. IMP-03 adds optional canonical IDs to `agent_mentions` while preserving its original string fields.
 
 ### canonical_entities
 
@@ -221,7 +226,7 @@ Service-level validation allows no-product and unresolved records while preventi
 
 ## Entity Identity Persistence
 
-The IMP-02 identity tables are additive and are not connected to Tauri commands, UI, collectors, detector output, or weekly metrics. `config/aliases.yml` remains the deterministic entity-detector input.
+The IMP-02 identity tables are additive. `config/aliases.yml` remains the deterministic entity-detector input and bootstrap source; IMP-03 adds an explicit command that bootstraps those aliases idempotently before linking existing mentions. Collectors, classifiers, and weekly metrics remain unchanged.
 
 ### entity_aliases
 
@@ -235,7 +240,19 @@ Durable aliases for canonical entities with their origin and matching context.
 - `is_ambiguous` and optional `context_terms_json` preserve contextual disambiguation requirements.
 - Status values are `active` and `archived`; lookup returns active aliases and may return multiple candidate entities.
 
-The explicit curated bootstrap reads the real `config/aliases.yml`, creates a canonical entity only when no normalized-name candidate exists, reuses exactly one candidate, and abstains when multiple candidates exist. It is idempotent and is not run during database initialization.
+The explicit curated bootstrap reads the real `config/aliases.yml`, creates a canonical entity only when no normalized-name candidate exists, reuses exactly one candidate, and abstains when multiple candidates exist. It is idempotent, is not run during database initialization, and is invoked only by an explicit identity-linkage operation.
+
+### Mention identity linkage
+
+`link_agent_mentions_to_entities` resolves eligible `agent_mentions` through persistent aliases without changing `agent_name` or any classifier field.
+
+- Eligibility includes a missing `entity_id` or a null/retryable status (`unresolved` or `missing_alias`).
+- Alias lookup normalizes the mention name, prefers an exact source scope over `global`, and considers active aliases and active canonical entities only.
+- Multiple canonical candidates always produce `ambiguous`; the resolver never silently selects the first row.
+- Aliases marked ambiguous require at least one configured context term to match the mention snippet as a normalized phrase.
+- Archived aliases/entities and clear category/type conflicts produce `skipped`; absent aliases produce `missing_alias`.
+- Resolved identity is stored as the canonical UUID plus reason, confidence, and timestamp. `INSERT OR REPLACE` mention detection preserves these fields on later detector runs.
+- The batch update changes only the five identity-linkage columns. Weekly metrics continue to group and score by the existing mention name and category.
 
 ### external_identity_reviews
 
@@ -255,6 +272,7 @@ DuckDB currently rejects updates to a parent row referenced by a foreign key, ev
 - Raw, normalized, and aggregated data stay separate for auditability.
 - External source records, observations, and canonical identities remain separate from social post storage.
 - Persistent aliases coexist with YAML detector configuration; they do not replace detector reads.
+- Mention-to-canonical linkage is explicit and additive; unresolved legacy mentions remain valid.
 - Candidate Review (`entity_review_decisions`) and external source identity review (`external_identity_reviews`) answer different questions and remain separate.
 - Schema initialization uses `CREATE TABLE IF NOT EXISTS` for MVP.
 - Schema initialization uses additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` migrations. If a real legacy `agent_mentions_compatible` table or view is present, initialization removes that compatibility object before applying the current schema.

@@ -6,9 +6,10 @@ use duckdb::Connection;
 use duckdb::Transaction;
 
 use crate::models::entities::{
-    AgentMentionForCost, AgentMentionForSentiment, AgentMentionPreview, CandidateEntityReview,
-    CostClassification, DetectedAgentMention, EntityReviewDecision, RawPostForDetection,
-    RegionClassification, SentimentClassification,
+    AgentMentionForCost, AgentMentionForIdentityLinkage, AgentMentionForSentiment,
+    AgentMentionPreview, CandidateEntityReview, CostClassification, DetectedAgentMention,
+    EntityReviewDecision, MentionIdentityResolution, RawPostForDetection, RegionClassification,
+    SentimentClassification,
 };
 use crate::models::threads::{DiscoveryCrawlResult, ThreadPostRaw};
 use crate::models::trend::WeeklyAgentMetric;
@@ -116,6 +117,11 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
     reviewed_category TEXT,
     review_note TEXT,
     reviewed_at TIMESTAMP,
+    entity_id UUID,
+    identity_resolution_status TEXT,
+    identity_resolution_reason TEXT,
+    identity_resolution_confidence DOUBLE,
+    identity_resolved_at TIMESTAMP,
     region TEXT DEFAULT 'unknown',
     confidence DOUBLE DEFAULT 0.0,
     match_confidence DOUBLE DEFAULT 0.0,
@@ -169,6 +175,21 @@ ALTER TABLE agent_mentions
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS entity_id UUID;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolution_status TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolution_reason TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolution_confidence DOUBLE;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolved_at TIMESTAMP;
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS match_confidence DOUBLE DEFAULT 0.0;
@@ -645,6 +666,11 @@ INSERT OR REPLACE INTO agent_mentions (
     reviewed_category,
     review_note,
     reviewed_at,
+    entity_id,
+    identity_resolution_status,
+    identity_resolution_reason,
+    identity_resolution_confidence,
+    identity_resolved_at,
     region,
     confidence,
     match_confidence,
@@ -669,6 +695,11 @@ INSERT OR REPLACE INTO agent_mentions (
             THEN COALESCE((SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1), CURRENT_TIMESTAMP)
         ELSE (SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1)
     END,
+    (SELECT entity_id FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolution_status FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolution_reason FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolution_confidence FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolved_at FROM agent_mentions WHERE mention_id = ?1),
     ?8,
     ?9,
     ?10,
@@ -1049,6 +1080,103 @@ pub fn load_raw_posts_for_detection() -> Result<Vec<RawPostForDetection>, String
     }
 
     Ok(posts)
+}
+
+pub fn load_agent_mentions_for_identity_linkage(
+) -> Result<Vec<AgentMentionForIdentityLinkage>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                mention_id,
+                agent_name,
+                COALESCE(category, 'unknown'),
+                COALESCE(source_snippet, '')
+            FROM agent_mentions
+            WHERE entity_id IS NULL
+                OR identity_resolution_status IS NULL
+                OR identity_resolution_status IN ('unresolved', 'missing_alias')
+            ORDER BY detected_at, mention_id
+            "#,
+        )
+        .map_err(|error| format!("DuckDB identity linkage query preparation failed: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AgentMentionForIdentityLinkage {
+                mention_id: row.get(0)?,
+                agent_name: row.get(1)?,
+                category: row.get(2)?,
+                source_snippet: row.get(3)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB identity linkage query failed: {error}"))?;
+
+    let mut mentions = Vec::new();
+    for row in rows {
+        mentions.push(
+            row.map_err(|error| format!("DuckDB identity linkage row read failed: {error}"))?,
+        );
+    }
+    Ok(mentions)
+}
+
+pub fn save_mention_identity_resolutions(
+    resolutions: &[MentionIdentityResolution],
+) -> Result<usize, String> {
+    if resolutions.is_empty() {
+        return Ok(0);
+    }
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB identity linkage transaction failed: {error}"))?;
+    let mut updated_count = 0;
+
+    {
+        let mut statement = transaction
+            .prepare(
+                r#"
+                UPDATE agent_mentions
+                SET
+                    entity_id = CASE
+                        WHEN ?2 IS NULL THEN NULL
+                        ELSE CAST(?2 AS UUID)
+                    END,
+                    identity_resolution_status = ?3,
+                    identity_resolution_reason = ?4,
+                    identity_resolution_confidence = ?5,
+                    identity_resolved_at = CASE
+                        WHEN ?3 = 'resolved' THEN CURRENT_TIMESTAMP
+                        ELSE NULL
+                    END
+                WHERE mention_id = ?1
+                "#,
+            )
+            .map_err(|error| {
+                format!("DuckDB identity linkage update preparation failed: {error}")
+            })?;
+
+        for resolution in resolutions {
+            updated_count += statement
+                .execute(params![
+                    &resolution.mention_id,
+                    &resolution.entity_id,
+                    resolution.status.as_str(),
+                    &resolution.reason,
+                    resolution.confidence,
+                ])
+                .map_err(|error| format!("DuckDB identity linkage update failed: {error}"))?;
+        }
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB identity linkage commit failed: {error}"))?;
+    Ok(updated_count)
 }
 
 pub fn save_agent_mentions(mentions: &[DetectedAgentMention]) -> Result<usize, String> {
