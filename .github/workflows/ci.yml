@@ -4,10 +4,13 @@ on:
   pull_request:
     branches:
       - main
+      - feature/entity-identity-persistence
   push:
     branches:
       - main
       - feature/entity-identity-persistence
+      - "feature/**"
+  workflow_dispatch:
 
 permissions:
   contents: read

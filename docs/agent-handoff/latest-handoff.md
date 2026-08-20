@@ -1,37 +1,36 @@
 # Latest Handoff
 
 Date: 2026-08-20
-Session: 050-external-identity-review-ui
+Session: 051-stacked-pr-ci
 Agent: Codex
 
 ## Current State
 
-IMP-06 is implemented and pushed on stacked branch `feature/external-identity-review-ui`, based on checkpoint `3d2ee61` from `feature/entity-identity-persistence`. Feature commit `c81755e` is under draft review at https://github.com/wijayasf/trend_radar/pull/2. PR #1 remains untouched, open, and draft. No merge occurred.
+CI-02 is being prepared on `feature/external-identity-review-ui` for stacked draft PR #2 at https://github.com/wijayasf/trend_radar/pull/2. PR #1 remains open and draft with successful checks. No application logic changed and neither PR was merged.
 
 ## Key Changes
 
-- Added Tauri commands to list ExplainX external identity review items, submit explicit decisions, and inspect append-only history.
-- Added a desktop External Identity Review panel with pending/approved/rejected/ambiguous counts and human review controls.
-- All decision writes reuse the existing transactional `external_identity_reviews` repository operation.
-- Candidate Review and existing weekly metrics remain independent and unchanged.
-- Added isolated regression tests covering all decisions, repeated history, invalid input safety, and subsystem separation.
+- Extended pull-request CI coverage to `main` and `feature/entity-identity-persistence`.
+- Extended push CI coverage to `main`, `feature/entity-identity-persistence`, and `feature/**`.
+- Added manual `workflow_dispatch` support.
+- Kept all three existing workflow jobs and their security/no-live-call behavior unchanged.
 
 ## Validation Snapshot
 
-- Frontend production build, Rust format/check, and diff checks pass.
+- Frontend build, Rust format/check, and diff checks pass.
 - Parallel and serial Rust suites each pass: 86 passed, 0 failed, 1 intentionally ignored live Threads test.
-- Requested secret scans found no real secret values; runtime artifacts remain ignored and untracked.
-- Tauri compiles and starts without schema/catalog errors; native UI click-through remains manual because browser-assisted inspection was unavailable.
-- No live Threads, Apify, or ExplainX request ran.
+- Requested security greps and the value-aware scan found no real secret values.
+- The first stacked PR #2 workflow run remains pending push.
+- No live Threads, Apify, or ExplainX call is part of this change.
 
 ## Pending
 
-- Review the stacked PR #2 and its CI checks.
-- Keep PR #1 and PR #2 draft; do not merge or begin scoring/momentum work yet.
+- Commit and push CI-02.
+- Watch PR #2 checks to completion and confirm PR #1 remains unchanged.
 
 ## Risk Note
 
-The UI presents identity evidence but cannot establish semantic equivalence automatically; review quality remains a human responsibility. The list is ExplainX-scoped for this milestone, and initial history state is inferred as pending because pending is not stored as an audit decision.
+The `feature/**` push trigger improves branch coverage but increases CI runner usage. Bundled DuckDB compilation may make the Rust job materially slower than the other jobs.
 
 ## Token Usage
 
