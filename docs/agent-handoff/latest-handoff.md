@@ -1,38 +1,37 @@
 # Latest Handoff
 
 Date: 2026-08-21
-Session: 053-pr-2-human-ui-review
+Session: 055-cross-source-scoring-calibration
 Agent: Codex
 
 ## Current State
 
-PR #2 remains open and draft on `feature/external-identity-review-ui`, stacked onto `feature/entity-identity-persistence`. The user completed the External Identity Review UI click-through, and all Approve, Reject, Mark Ambiguous, feedback, history, separation, and metrics-independence checks passed. PR #1 remains open, draft, and unchanged.
+PR #1 and PR #2 were merged to `main` in stacked order through merge commits `9bdf81e` and `87002c3`. DESIGN-01 and CAL-01 now live on `design/cross-source-scoring-momentum` as documentation-only checkpoints. IMP-07 has not started.
 
 ## Key Changes
 
-- Manual Approve, Reject, and Mark Ambiguous flows passed using local/import fixture data.
-- Review-needed, no-decision, initial-state, approved, rejected, and ambiguous vocabulary rendered as intended.
-- `Review saved successfully. List refreshed.` remained visible after review actions.
-- Append-only history remained chronological and retained prior events.
-- Candidate Review and both weekly metrics surfaces remained unchanged by External Identity Review actions.
-- No live Threads, Apify, or ExplainX request ran.
+- Added a synthetic calibration fixture with eight identity and evidence cases.
+- Locked a proposed region-local normalization and factor formula under `cross-source-v1-proposal`.
+- Expected Global order is Claude Code, Ponytail, and Caveman; Claude Code is the only Indonesia trusted row.
+- FlowPilot remains registry-only watchlist evidence; pending, ambiguous, missing-alias, and no-product cases remain outside trusted scores.
+- Added deterministic fixture assertions and minimum IMP-07 acceptance criteria without implementing IMP-07.
 
 ## Validation Snapshot
 
-- PR #2 CI passed Frontend build, Rust validation, and Tracked secret scan checks.
-- Manual UI review conclusion: APPROVE FOR HUMAN REVIEW.
-- Frontend production build, Rust formatting, locked check, security scan, and diff check passed.
-- Parallel and serial locked Rust suites each passed: 86 passed, 0 failed, 1 intentionally ignored live Threads test.
-- No application code, schema, identity semantics, scoring, momentum, Programming Fit, IMP-07, or merge work was performed.
+- DESIGN-01 passed frontend build, Rust formatting, locked check, default test suite, security scan, and diff check.
+- CAL-01 fixture parse, factor recomputation, regional ranking, frontend build, Rust formatting, locked check, default tests, security scan, and diff check passed.
+- Rust result: 86 passed, 0 failed, 1 intentionally ignored live Threads test; seven unchanged dead-code warnings remain.
+- No application code, schema, score implementation, momentum calculation, Programming Fit, or live collector work was performed.
 
 ## Pending
 
-- Request human code review while keeping PR #1 and PR #2 draft.
-- Do not begin IMP-07 or merge either PR without an explicit follow-up decision.
+- Review and approve CAL-01 factor formulas, labels, expected ranks, and exclusion behavior.
+- Treat the fixture as the deterministic IMP-07 test oracle only after explicit approval.
+- Do not start IMP-07 until this calibration checkpoint is accepted.
 
 ## Risk Note
 
-`initial_state` is a presentation DTO marker rather than a persisted review decision. The review list still loads all ExplainX links and should gain server-side filtering/pagination only if source volume grows. PR #2 remains dependent on the stacked PR #1 base strategy.
+The proposed fixture normalization is intentionally specific and may need a new score version after real-data calibration. ExplainX registry presence must remain conversation-gated, and sparse Indonesia data must remain independently normalized.
 
 ## Token Usage
 
