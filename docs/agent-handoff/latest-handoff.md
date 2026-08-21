@@ -1,38 +1,37 @@
 # Latest Handoff
 
 Date: 2026-08-21
-Session: 053-pr-2-human-ui-review
+Session: 054-cross-source-scoring-design
 Agent: Codex
 
 ## Current State
 
-PR #2 remains open and draft on `feature/external-identity-review-ui`, stacked onto `feature/entity-identity-persistence`. The user completed the External Identity Review UI click-through, and all Approve, Reject, Mark Ambiguous, feedback, history, separation, and metrics-independence checks passed. PR #1 remains open, draft, and unchanged.
+PR #1 and PR #2 were merged to `main` in stacked order through merge commits `9bdf81e` and `87002c3`. Work continues on `design/cross-source-scoring-momentum` as a documentation-only design checkpoint. IMP-07 has not started.
 
 ## Key Changes
 
-- Manual Approve, Reject, and Mark Ambiguous flows passed using local/import fixture data.
-- Review-needed, no-decision, initial-state, approved, rejected, and ambiguous vocabulary rendered as intended.
-- `Review saved successfully. List refreshed.` remained visible after review actions.
-- Append-only history remained chronological and retained prior events.
-- Candidate Review and both weekly metrics surfaces remained unchanged by External Identity Review actions.
-- No live Threads, Apify, or ExplainX request ran.
+- Added a proposed model that keeps conversation, registry, identity-review, recency, and regional signals independently explainable.
+- Restricted trusted registry contribution to human-approved `same_entity` ExplainX links.
+- Proposed a versioned weighted formula with a required conversation row so listed-only tools cannot enter trusted rankings.
+- Defined future momentum/WoW semantics but excluded them from the recommended IMP-07 scope.
+- Recommended an additive `cross_source_entity_scores` prototype and read-only UI preview without changing existing weekly tables.
 
 ## Validation Snapshot
 
-- PR #2 CI passed Frontend build, Rust validation, and Tracked secret scan checks.
-- Manual UI review conclusion: APPROVE FOR HUMAN REVIEW.
-- Frontend production build, Rust formatting, locked check, security scan, and diff check passed.
-- Parallel and serial locked Rust suites each passed: 86 passed, 0 failed, 1 intentionally ignored live Threads test.
-- No application code, schema, identity semantics, scoring, momentum, Programming Fit, IMP-07, or merge work was performed.
+- PR #1 and PR #2 merged cleanly and post-merge local validation passed before this design session.
+- Session-054 frontend build, Rust formatting, locked check, default test suite, security scan, and diff check passed.
+- Rust result: 86 passed, 0 failed, 1 intentionally ignored live Threads test; seven unchanged dead-code warnings remain.
+- No application code, schema, score implementation, momentum calculation, Programming Fit, or live collector work was performed.
 
 ## Pending
 
-- Request human code review while keeping PR #1 and PR #2 draft.
-- Do not begin IMP-07 or merge either PR without an explicit follow-up decision.
+- Review and approve the scoring design and its open calibration questions.
+- Define a small expected-ranking fixture before IMP-07 implementation.
+- Do not start IMP-07 until its exact score contract and acceptance cases are approved.
 
 ## Risk Note
 
-`initial_state` is a presentation DTO marker rather than a persisted review decision. The review list still loads all ExplainX links and should gain server-side filtering/pagination only if source volume grows. PR #2 remains dependent on the stacked PR #1 base strategy.
+ExplainX registry presence can over-rank listed-but-undiscussed tools unless the conversation-evidence gate remains mandatory. Sparse Indonesia data needs independent normalization. Weight changes require explicit score versioning so historical values remain auditable.
 
 ## Token Usage
 
