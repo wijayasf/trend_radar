@@ -1262,7 +1262,7 @@
   }
 
   async function loadExternalIdentityReviewItems() {
-    if (isLoadingExternalIdentityReviews) return;
+    if (isLoadingExternalIdentityReviews) return false;
 
     isLoadingExternalIdentityReviews = true;
     externalIdentityReviewStatus = 'Loading ExplainX identity links...';
@@ -1281,8 +1281,10 @@
         draft_note: '',
       }));
       externalIdentityReviewStatus = result.message;
+      return true;
     } catch (error) {
       externalIdentityReviewStatus = `error: ${friendlyError(error)}`;
+      return false;
     } finally {
       isLoadingExternalIdentityReviews = false;
     }
@@ -1305,7 +1307,7 @@
     activeExternalIdentityReviewDecision = decision;
     externalIdentityReviewStatus = `Recording ${decision} decision for ${item.source_record_name}...`;
     try {
-      const result = await invoke<ExternalIdentityReviewSubmissionResult>(
+      await invoke<ExternalIdentityReviewSubmissionResult>(
         'submit_external_identity_review',
         {
           linkId: item.link_id,
@@ -1315,9 +1317,11 @@
           evidenceNote: item.draft_note?.trim() || null,
         },
       );
-      externalIdentityReviewStatus = result.message;
-      await loadExternalIdentityReviewItems();
+      const listRefreshed = await loadExternalIdentityReviewItems();
       await loadExternalIdentityReviewHistory(item.link_id);
+      if (listRefreshed) {
+        externalIdentityReviewStatus = 'Review saved successfully. List refreshed.';
+      }
     } catch (error) {
       externalIdentityReviewStatus = `error: ${friendlyError(error)}`;
     } finally {
@@ -1339,6 +1343,26 @@
     } catch (error) {
       externalIdentityReviewHistory = [];
       externalIdentityReviewHistoryStatus = `error: ${friendlyError(error)}`;
+    }
+  }
+
+  function externalReviewStateLabel(state: string | null) {
+    switch (state) {
+      case 'initial_state':
+        return 'Initial state';
+      case 'pending':
+      case 'review_needed':
+        return 'Review needed';
+      case 'approved':
+        return 'Approved';
+      case 'rejected':
+        return 'Rejected';
+      case 'ambiguous':
+        return 'Marked ambiguous';
+      case null:
+        return 'No reviewer decision yet';
+      default:
+        return state;
     }
   }
 
@@ -2171,7 +2195,7 @@
 
       <div class="collector-result detector-result" aria-live="polite">
         <span>Status: {externalIdentityReviewStatus}</span>
-        <span>Pending: {externalIdentityReviewPending}</span>
+        <span>Review needed: {externalIdentityReviewPending}</span>
         <span>Approved: {externalIdentityReviewApproved}</span>
         <span>Rejected: {externalIdentityReviewRejected}</span>
         <span>Ambiguous: {externalIdentityReviewAmbiguous}</span>
@@ -2196,9 +2220,9 @@
                 </div>
                 <div>
                   <strong class={`review-state review-state-${item.current_status}`}>
-                    {item.current_status}
+                    {externalReviewStateLabel(item.current_status)}
                   </strong>
-                  <span>Latest: {item.latest_decision || 'none'}</span>
+                  <span>Latest: {externalReviewStateLabel(item.latest_decision)}</span>
                   {#if item.latest_reviewer}
                     <span>Reviewer: {item.latest_reviewer}</span>
                   {/if}
@@ -2305,8 +2329,8 @@
                           {#each externalIdentityReviewHistory as history}
                             <tr>
                               <td>{history.reviewed_at}</td>
-                              <td>{history.previous_state}</td>
-                              <td>{history.decision}</td>
+                              <td>{externalReviewStateLabel(history.previous_state)}</td>
+                              <td>{externalReviewStateLabel(history.decision)}</td>
                               <td>{history.proposed_relationship_type}</td>
                               <td>{history.reviewer}</td>
                               <td>{history.review_note || '-'}</td>

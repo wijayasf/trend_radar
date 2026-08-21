@@ -211,7 +211,7 @@ fn load_history(
 ) -> Result<ExternalIdentityReviewHistoryResult, String> {
     find_item(repository, link_id)?;
     let reviews = repository.list_external_identity_reviews(link_id)?;
-    let mut previous_state = "pending".to_string();
+    let mut previous_state = "initial_state".to_string();
     let mut history = Vec::with_capacity(reviews.len());
     for review in reviews {
         let decision = review.decision.as_str().to_string();
@@ -383,7 +383,7 @@ mod tests {
         let history = get_external_identity_review_history(ponytail.link_id.clone())
             .expect("history should load");
         assert_eq!(history.total, 2);
-        assert_eq!(history.history[0].previous_state, "pending");
+        assert_eq!(history.history[0].previous_state, "initial_state");
         assert_eq!(history.history[0].decision, "ambiguous");
         assert_eq!(history.history[1].previous_state, "ambiguous");
         assert_eq!(history.history[1].decision, "approved");

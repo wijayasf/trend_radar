@@ -1,38 +1,37 @@
 # Latest Handoff
 
 Date: 2026-08-21
-Session: 051-pr-2-self-review
+Session: 052-external-review-ux-polish
 Agent: Codex
 
 ## Current State
 
-PR #2 at https://github.com/wijayasf/trend_radar/pull/2 remains open and draft on `feature/external-identity-review-ui`, stacked onto `feature/entity-identity-persistence`. Its application/CI head was `8e6f41b` when reviewed, the branch was clean and synchronized, and all GitHub checks were successful. PR #1 remains open and draft.
+PR #2 remains open and draft on `feature/external-identity-review-ui`, stacked onto `feature/entity-identity-persistence`. PR2-UX-01 clarifies External Identity Review labels and action feedback without changing persistence, identity semantics, transactions, Candidate Review, or weekly metrics. PR #1 remains open, draft, and unchanged.
 
-## Review Result
+## Key Changes
 
-- Conclusion: `APPROVE AS DRAFT CHECKPOINT`.
-- No blocking correctness, data-loss, security, regression, or scope issue was found.
-- External review decisions remain explicit, append-only, and transactional.
-- Candidate Review and both weekly metric paths remain independent from External Identity Review.
-- The UI exposes source/canonical context, relationship selection, reviewer/evidence inputs, explicit decisions, status counts, and chronological history.
-- Stacked PR CI covers the feature base and feature pushes without changing validation jobs.
+- Persisted `pending`, `approved`, `rejected`, and `ambiguous` values remain unchanged while the UI presents human-readable labels.
+- The inferred state before the first audit row uses the display-only `initial_state` marker and appears as Initial state.
+- Successful review actions retain `Review saved successfully. List refreshed.` after list refresh.
+- A failed list refresh keeps its error message and is not overwritten by success copy.
+- Future filtering/pagination is documented for higher ExplainX review volume; it is not implemented or required for the current MVP.
 
 ## Validation Snapshot
 
-- `npm run build`, Rust formatting, locked check, and diff check passed.
+- Frontend production build, Rust formatting, locked check, and diff check passed.
 - Parallel and serial locked Rust suites each passed: 86 passed, 0 failed, 1 intentionally ignored live Threads test.
 - No live Threads, Apify, or ExplainX request ran.
-- Requested security scans found no real secret values; runtime files remain ignored and untracked.
+- No schema, scoring, momentum, Programming Fit, IMP-07, or merge work was performed.
 
 ## Pending
 
-- Commit and push the three review documentation files only.
-- Let the docs-only push checks complete and confirm PR #2 remains draft.
-- Obtain human review before changing PR readiness or planning IMP-07.
+- Run the final security scan, commit PR2-UX-01, and push the feature branch.
+- Confirm the new PR #2 checks complete successfully.
+- Keep PR #1 and PR #2 draft for human review.
 
 ## Risk Note
 
-The service reloads all ExplainX links for item lookup, history previous-state display assumes an initial pending state, action success copy is quickly replaced by refresh copy, and open feature branches can trigger duplicate push/PR CI runs. These are non-blocking for the local draft checkpoint.
+`initial_state` is a presentation DTO marker rather than a persisted review decision. The review list still loads all ExplainX links and should gain server-side filtering/pagination only if source volume grows.
 
 ## Token Usage
 
