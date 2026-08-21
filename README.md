@@ -38,6 +38,7 @@ The application is designed as a local-first desktop app, using DuckDB for local
 - Entity detection for AI Agent-related tools and skills.
 - Candidate entity extraction for new or unknown tool names that need review.
 - Candidate review workflow with durable approve/ignore decisions for unknown candidates.
+- Import-first ExplainX registry onboarding with conservative canonical identity candidates.
 - Region classification for Indonesia, global, and unknown signals.
 - Sentiment and cost/boros signal classification.
 - Weekly aggregation with trend score ranking.
@@ -173,6 +174,18 @@ Dashboard rankings and report exports display the latest aggregated week by defa
 The actor requires at least 10 max posts. The backend adjusts smaller values to 10. Synchronous actor timeout defaults to 300 seconds and can be changed with `APIFY_RUN_TIMEOUT_SECONDS` (bounded to 30-900 seconds).
 
 Do not use the Apify fallback in production without legal and compliance review.
+
+## ExplainX Import
+
+The desktop app can import a local JSON array of ExplainX-style registry records through the
+`ExplainX Import` panel. The backend retains source-specific metadata and raw JSON in DuckDB,
+creates durable ExplainX `source_records`, and records each import as a local source collection
+run. This milestone performs no live ExplainX request.
+
+Identity handling is precision-first. One active, unambiguous exact alias creates a pending
+same-entity link for review; child resources such as MCP servers, skills, plugins, and commands
+remain review-needed. Ambiguous names such as `Codex` and records with no known alias are never
+merged automatically. ExplainX import does not change weekly metrics or Candidate Review.
 
 ## Review Web Demo
 

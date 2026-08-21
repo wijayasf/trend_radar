@@ -32,6 +32,65 @@ pub struct RawPostForDetection {
 }
 
 #[derive(Debug, Clone)]
+pub struct AgentMentionForIdentityLinkage {
+    pub mention_id: String,
+    pub agent_name: String,
+    pub category: String,
+    pub source_snippet: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityResolutionStatus {
+    Resolved,
+    Unresolved,
+    Ambiguous,
+    MissingAlias,
+    Skipped,
+}
+
+impl IdentityResolutionStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Resolved => "resolved",
+            Self::Unresolved => "unresolved",
+            Self::Ambiguous => "ambiguous",
+            Self::MissingAlias => "missing_alias",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MentionIdentityResolution {
+    pub mention_id: String,
+    pub agent_name: String,
+    pub entity_id: Option<String>,
+    pub canonical_entity_name: Option<String>,
+    pub status: IdentityResolutionStatus,
+    pub reason: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MentionIdentityLinkagePreview {
+    pub mention_name: String,
+    pub resolution_status: String,
+    pub canonical_entity_name: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MentionIdentityLinkageResult {
+    pub resolved_count: usize,
+    pub missing_alias_count: usize,
+    pub ambiguous_count: usize,
+    pub skipped_count: usize,
+    pub error_count: usize,
+    pub message: String,
+    pub preview: Vec<MentionIdentityLinkagePreview>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RegionClassification {
     pub post_id: String,
     pub region: String,

@@ -1,0 +1,114 @@
+name: AI Agent Trend Radar CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - feature/entity-identity-persistence
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+  rust:
+    name: Rust validation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      APP_ENV: ci
+      APIFY_LIVE_CRAWL_ENABLED: "false"
+      APIFY_TOKEN: ""
+      THREADS_ACCESS_TOKEN: ""
+      THREADS_USER_ID: ""
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Set up Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Check Rust project
+        working-directory: src-tauri
+        run: cargo check --locked
+
+      - name: Run deterministic Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  security-scan:
+    name: Tracked secret scan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Scan tracked files without printing values
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          assignment_pattern='(APIFY_TOKEN|THREADS_ACCESS_TOKEN|app_secret)[[:space:]]*[:=][[:space:]]*[^[:space:]$<{]{20,}'
+          known_prefix_pattern='(THAAP[A-Za-z0-9_-]{20,}|apify_api_[A-Za-z0-9_-]{20,})'
+          findings="$RUNNER_TEMP/potential-secret-files.txt"
+
+          if git grep -I -l -E \
+            -e "$assignment_pattern" \
+            -e "$known_prefix_pattern" \
+            -- . \
+            ':!.env.example' \
+            ':!apps/review-web/.env.example' > "$findings"; then
+            echo "::error::Potential hardcoded secret value detected in tracked files."
+            echo "Review these files locally; secret values are intentionally not printed:"
+            while IFS= read -r file; do
+              printf ' - %s\n' "$file"
+            done < "$findings"
+            exit 1
+          fi
+
+          echo "No likely hardcoded token or app secret values found in tracked files."

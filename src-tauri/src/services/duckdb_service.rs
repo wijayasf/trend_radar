@@ -6,12 +6,13 @@ use duckdb::Connection;
 use duckdb::Transaction;
 
 use crate::models::entities::{
-    AgentMentionForCost, AgentMentionForSentiment, AgentMentionPreview, CandidateEntityReview,
-    CostClassification, DetectedAgentMention, EntityReviewDecision, RawPostForDetection,
-    RegionClassification, SentimentClassification,
+    AgentMentionForCost, AgentMentionForIdentityLinkage, AgentMentionForSentiment,
+    AgentMentionPreview, CandidateEntityReview, CostClassification, DetectedAgentMention,
+    EntityReviewDecision, MentionIdentityResolution, RawPostForDetection, RegionClassification,
+    SentimentClassification,
 };
 use crate::models::threads::{DiscoveryCrawlResult, ThreadPostRaw};
-use crate::models::trend::WeeklyAgentMetric;
+use crate::models::trend::{IdentityResolutionSkipCounts, WeeklyAgentMetric, WeeklyEntityMetric};
 use crate::utils::config;
 
 const SCHEMA_SQL: &str = r#"
@@ -116,6 +117,11 @@ CREATE TABLE IF NOT EXISTS agent_mentions (
     reviewed_category TEXT,
     review_note TEXT,
     reviewed_at TIMESTAMP,
+    entity_id UUID,
+    identity_resolution_status TEXT,
+    identity_resolution_reason TEXT,
+    identity_resolution_confidence DOUBLE,
+    identity_resolved_at TIMESTAMP,
     region TEXT DEFAULT 'unknown',
     confidence DOUBLE DEFAULT 0.0,
     match_confidence DOUBLE DEFAULT 0.0,
@@ -169,6 +175,21 @@ ALTER TABLE agent_mentions
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS entity_id UUID;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolution_status TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolution_reason TEXT;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolution_confidence DOUBLE;
+
+ALTER TABLE agent_mentions
+    ADD COLUMN IF NOT EXISTS identity_resolved_at TIMESTAMP;
 
 ALTER TABLE agent_mentions
     ADD COLUMN IF NOT EXISTS match_confidence DOUBLE DEFAULT 0.0;
@@ -312,6 +333,294 @@ CREATE INDEX IF NOT EXISTS idx_weekly_agent_metrics_region_score
     ON weekly_agent_metrics(region, trend_score);
 "#;
 
+const MULTI_SOURCE_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS canonical_entities (
+    entity_id UUID PRIMARY KEY DEFAULT uuid(),
+    canonical_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    primary_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    description TEXT,
+    primary_website TEXT,
+    primary_repository TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('active', 'archived')),
+    CHECK (primary_type IN (
+        'agent_tool',
+        'framework_sdk',
+        'skill_mode',
+        'protocol',
+        'connector_plugin',
+        'registry_discovery',
+        'app_builder',
+        'other'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS weekly_entity_metrics (
+    id UUID PRIMARY KEY DEFAULT uuid(),
+    week_start DATE NOT NULL,
+    week_end DATE NOT NULL,
+    entity_id UUID NOT NULL,
+    canonical_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    region TEXT NOT NULL,
+    mention_count BIGINT NOT NULL DEFAULT 0,
+    positive_count BIGINT NOT NULL DEFAULT 0,
+    neutral_count BIGINT NOT NULL DEFAULT 0,
+    negative_count BIGINT NOT NULL DEFAULT 0,
+    mixed_count BIGINT NOT NULL DEFAULT 0,
+    cost_positive_count BIGINT NOT NULL DEFAULT 0,
+    cost_negative_boros_count BIGINT NOT NULL DEFAULT 0,
+    cost_mixed_count BIGINT NOT NULL DEFAULT 0,
+    cost_not_mentioned_count BIGINT NOT NULL DEFAULT 0,
+    source_count BIGINT NOT NULL DEFAULT 0,
+    first_seen_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
+    trend_score DOUBLE NOT NULL DEFAULT 0.0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (week_start, entity_id, region),
+    CHECK (region IN ('indonesia', 'global', 'unknown'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_entity_metrics_region_score
+    ON weekly_entity_metrics(week_start, region, trend_score);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_entity_metrics_entity
+    ON weekly_entity_metrics(entity_id, week_start);
+
+CREATE TABLE IF NOT EXISTS source_collection_runs (
+    collection_run_id UUID PRIMARY KEY DEFAULT uuid(),
+    source TEXT NOT NULL,
+    collection_mode TEXT NOT NULL,
+    scope_json TEXT,
+    started_at TIMESTAMP NOT NULL,
+    finished_at TIMESTAMP,
+    status TEXT NOT NULL,
+    records_seen BIGINT NOT NULL DEFAULT 0,
+    observations_saved BIGINT NOT NULL DEFAULT 0,
+    error_summary TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('running', 'completed', 'partial', 'failed')),
+    CHECK (collection_mode IN ('scheduled', 'manual', 'import', 'replay'))
+);
+
+CREATE TABLE IF NOT EXISTS source_records (
+    source_record_id UUID PRIMARY KEY DEFAULT uuid(),
+    source TEXT NOT NULL,
+    source_record_key TEXT NOT NULL,
+    record_type TEXT NOT NULL,
+    resolution_state TEXT NOT NULL DEFAULT 'unresolved',
+    title TEXT,
+    external_url TEXT,
+    publisher TEXT,
+    description TEXT,
+    source_category TEXT,
+    repository_url TEXT,
+    published_at TIMESTAMP,
+    listed_at TIMESTAMP,
+    metadata_json TEXT,
+    first_seen_at TIMESTAMP NOT NULL,
+    last_seen_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source, source_record_key),
+    CHECK (resolution_state IN (
+        'single_entity',
+        'multiple_entities',
+        'no_product_entity',
+        'unresolved'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS source_observations (
+    observation_id UUID PRIMARY KEY DEFAULT uuid(),
+    collection_run_id UUID NOT NULL,
+    source_record_id UUID NOT NULL,
+    observed_at TIMESTAMP NOT NULL,
+    surface TEXT NOT NULL DEFAULT 'record',
+    observation_kind TEXT NOT NULL,
+    time_window TEXT NOT NULL DEFAULT 'none',
+    rank BIGINT,
+    source_score DOUBLE,
+    views BIGINT,
+    installs_total BIGINT,
+    installs_period BIGINT,
+    github_stars BIGINT,
+    upvotes BIGINT,
+    payload_hash TEXT,
+    source_payload_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (collection_run_id)
+        REFERENCES source_collection_runs(collection_run_id),
+    FOREIGN KEY (source_record_id)
+        REFERENCES source_records(source_record_id),
+    UNIQUE (
+        collection_run_id,
+        source_record_id,
+        surface,
+        observation_kind,
+        time_window
+    ),
+    CHECK (rank IS NULL OR rank > 0),
+    CHECK (views IS NULL OR views >= 0),
+    CHECK (installs_total IS NULL OR installs_total >= 0),
+    CHECK (installs_period IS NULL OR installs_period >= 0),
+    CHECK (github_stars IS NULL OR github_stars >= 0),
+    CHECK (upvotes IS NULL OR upvotes >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS source_record_entity_links (
+    link_id UUID PRIMARY KEY DEFAULT uuid(),
+    source_record_id UUID NOT NULL,
+    entity_id UUID NOT NULL,
+    relationship_type TEXT NOT NULL,
+    match_method TEXT NOT NULL,
+    match_confidence DOUBLE,
+    review_state TEXT NOT NULL DEFAULT 'pending',
+    evidence_json TEXT,
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_record_id)
+        REFERENCES source_records(source_record_id),
+    FOREIGN KEY (entity_id)
+        REFERENCES canonical_entities(entity_id),
+    UNIQUE (source_record_id, entity_id),
+    CHECK (relationship_type IN (
+        'same_entity',
+        'child_resource',
+        'related_entity',
+        'mentioned_entity'
+    )),
+    CHECK (review_state IN ('pending', 'approved', 'rejected', 'ambiguous')),
+    CHECK (
+        match_confidence IS NULL
+        OR (match_confidence >= 0.0 AND match_confidence <= 1.0)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_canonical_entities_normalized_name
+    ON canonical_entities(normalized_name);
+
+CREATE INDEX IF NOT EXISTS idx_source_collection_runs_source_started
+    ON source_collection_runs(source, started_at);
+
+CREATE INDEX IF NOT EXISTS idx_source_records_source_type
+    ON source_records(source, record_type);
+
+CREATE INDEX IF NOT EXISTS idx_source_observations_record_time
+    ON source_observations(source_record_id, observed_at);
+
+CREATE INDEX IF NOT EXISTS idx_source_entity_links_entity
+    ON source_record_entity_links(entity_id, review_state);
+"#;
+
+const IDENTITY_PERSISTENCE_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    entity_alias_id UUID PRIMARY KEY DEFAULT uuid(),
+    entity_id UUID NOT NULL,
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    source_scope TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    is_ambiguous BOOLEAN NOT NULL DEFAULT FALSE,
+    context_terms_json TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (entity_id) REFERENCES canonical_entities(entity_id),
+    UNIQUE (entity_id, normalized_alias, source_scope),
+    CHECK (source_scope IN (
+        'global',
+        'threads',
+        'explainx',
+        'github',
+        'hacker_news',
+        'product_hunt'
+    )),
+    CHECK (provenance IN (
+        'bootstrap_yaml',
+        'candidate_review',
+        'source_review',
+        'manual'
+    )),
+    CHECK (status IN ('active', 'archived'))
+);
+
+CREATE TABLE IF NOT EXISTS external_identity_reviews (
+    review_id UUID PRIMARY KEY DEFAULT uuid(),
+    link_id UUID NOT NULL,
+    source_record_id UUID NOT NULL,
+    entity_id UUID NOT NULL,
+    proposed_relationship_type TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    match_method TEXT NOT NULL,
+    match_confidence DOUBLE,
+    evidence_json TEXT,
+    review_note TEXT,
+    reviewer TEXT NOT NULL,
+    reviewed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (proposed_relationship_type IN (
+        'same_entity',
+        'child_resource',
+        'related_entity',
+        'mentioned_entity'
+    )),
+    CHECK (decision IN ('approved', 'rejected', 'ambiguous')),
+    CHECK (
+        match_confidence IS NULL
+        OR (match_confidence >= 0.0 AND match_confidence <= 1.0)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_lookup
+    ON entity_aliases(normalized_alias, source_scope, status);
+
+CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity
+    ON entity_aliases(entity_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_external_identity_reviews_link_time
+    ON external_identity_reviews(link_id, reviewed_at);
+
+CREATE INDEX IF NOT EXISTS idx_external_identity_reviews_record_entity
+    ON external_identity_reviews(source_record_id, entity_id);
+"#;
+
+const EXPLAINX_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS explainx_records (
+    id UUID PRIMARY KEY DEFAULT uuid(),
+    source_record_id UUID NOT NULL,
+    source_record_key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    tags_json TEXT,
+    url TEXT,
+    source_url TEXT,
+    pricing_text TEXT,
+    platform_text TEXT,
+    raw_json TEXT NOT NULL,
+    first_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ingestion_batch_id UUID NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    CHECK (status IN ('active', 'archived'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_explainx_records_normalized_name
+    ON explainx_records(normalized_name, status);
+
+CREATE INDEX IF NOT EXISTS idx_explainx_records_source_record
+    ON explainx_records(source_record_id);
+"#;
+
 const LEGACY_COMPATIBILITY_OBJECT: &str = "agent_mentions_compatible";
 const LEGACY_LOCAL_DATABASE_MESSAGE: &str = "Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.";
 
@@ -421,6 +730,11 @@ INSERT OR REPLACE INTO agent_mentions (
     reviewed_category,
     review_note,
     reviewed_at,
+    entity_id,
+    identity_resolution_status,
+    identity_resolution_reason,
+    identity_resolution_confidence,
+    identity_resolved_at,
     region,
     confidence,
     match_confidence,
@@ -445,6 +759,11 @@ INSERT OR REPLACE INTO agent_mentions (
             THEN COALESCE((SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1), CURRENT_TIMESTAMP)
         ELSE (SELECT reviewed_at FROM agent_mentions WHERE mention_id = ?1)
     END,
+    (SELECT entity_id FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolution_status FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolution_reason FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolution_confidence FROM agent_mentions WHERE mention_id = ?1),
+    (SELECT identity_resolved_at FROM agent_mentions WHERE mention_id = ?1),
     ?8,
     ?9,
     ?10,
@@ -621,6 +940,99 @@ SELECT
 FROM grouped;
 "#;
 
+const WEEKLY_ENTITY_METRICS_INSERT_SQL: &str = r#"
+INSERT INTO weekly_entity_metrics (
+    week_start,
+    week_end,
+    entity_id,
+    canonical_name,
+    entity_type,
+    region,
+    mention_count,
+    positive_count,
+    neutral_count,
+    negative_count,
+    mixed_count,
+    cost_positive_count,
+    cost_negative_boros_count,
+    cost_mixed_count,
+    cost_not_mentioned_count,
+    source_count,
+    first_seen_at,
+    last_seen_at,
+    trend_score
+)
+WITH base AS (
+    SELECT
+        CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)
+            - CAST(((EXTRACT(dow FROM CAST(COALESCE(p.posted_at, p.collected_at) AS DATE)) + 6) % 7) AS INTEGER)
+            AS week_start,
+        m.entity_id,
+        entities.canonical_name,
+        entities.primary_type AS entity_type,
+        COALESCE(m.region, 'unknown') AS region,
+        COALESCE(m.sentiment, 'unknown') AS sentiment,
+        COALESCE(m.cost_signal, 'not_mentioned') AS cost_signal,
+        COALESCE(NULLIF(trim(p.source_type), ''), 'threads') AS source_name,
+        COALESCE(p.posted_at, p.collected_at) AS observed_at
+    FROM agent_mentions m
+    JOIN threads_posts_raw p ON p.post_id = m.post_id
+    JOIN canonical_entities entities ON entities.entity_id = m.entity_id
+    WHERE m.entity_id IS NOT NULL
+        AND m.identity_resolution_status = 'resolved'
+        AND entities.status = 'active'
+),
+grouped AS (
+    SELECT
+        week_start,
+        CAST(week_start + INTERVAL 6 DAY AS DATE) AS week_end,
+        entity_id,
+        canonical_name,
+        entity_type,
+        region,
+        COUNT(*) AS mention_count,
+        SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) AS positive_count,
+        SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) AS neutral_count,
+        SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) AS negative_count,
+        SUM(CASE WHEN sentiment = 'mixed' THEN 1 ELSE 0 END) AS mixed_count,
+        SUM(CASE WHEN cost_signal = 'cost_positive' THEN 1 ELSE 0 END) AS cost_positive_count,
+        SUM(CASE WHEN cost_signal = 'cost_negative_boros' THEN 1 ELSE 0 END) AS cost_negative_boros_count,
+        SUM(CASE WHEN cost_signal = 'cost_mixed' THEN 1 ELSE 0 END) AS cost_mixed_count,
+        SUM(CASE WHEN cost_signal IN ('not_mentioned', 'none') THEN 1 ELSE 0 END) AS cost_not_mentioned_count,
+        COUNT(DISTINCT source_name) AS source_count,
+        MIN(observed_at) AS first_seen_at,
+        MAX(observed_at) AS last_seen_at
+    FROM base
+    GROUP BY week_start, week_end, entity_id, canonical_name, entity_type, region
+)
+SELECT
+    week_start,
+    week_end,
+    entity_id,
+    canonical_name,
+    entity_type,
+    region,
+    mention_count,
+    positive_count,
+    neutral_count,
+    negative_count,
+    mixed_count,
+    cost_positive_count,
+    cost_negative_boros_count,
+    cost_mixed_count,
+    cost_not_mentioned_count,
+    source_count,
+    first_seen_at,
+    last_seen_at,
+    -- Keep the existing MVP score unchanged; IMP-04 changes only the grouping identity.
+    (mention_count * 10)
+        + (positive_count * 3)
+        + (mixed_count * 1)
+        - (negative_count * 2)
+        - (cost_negative_boros_count * 1) AS trend_score
+FROM grouped;
+"#;
+
 pub fn configured_database_path() -> Result<PathBuf, String> {
     config::resolved_database_path()
 }
@@ -725,6 +1137,9 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
     connection
         .execute("DELETE FROM weekly_agent_metrics", [])
         .map_err(|error| reset_error("weekly metrics", error))?;
+    connection
+        .execute("DELETE FROM weekly_entity_metrics", [])
+        .map_err(|error| reset_error("canonical weekly metrics", error))?;
     if table_exists(&connection, "crawl_seed_results")? {
         connection
             .execute("DELETE FROM crawl_seed_results", [])
@@ -737,7 +1152,7 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
         .execute("DELETE FROM threads_posts_raw", [])
         .map_err(|error| reset_error("raw post", error))?;
 
-    Ok("Cleared local demo data: raw posts, mentions, crawl runs, and weekly metrics. Candidate decisions were preserved.".to_string())
+    Ok("Cleared local demo data: raw posts, mentions, crawl runs, weekly metrics, and canonical weekly metrics. Candidate decisions were preserved.".to_string())
 }
 
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, String> {
@@ -825,6 +1240,103 @@ pub fn load_raw_posts_for_detection() -> Result<Vec<RawPostForDetection>, String
     }
 
     Ok(posts)
+}
+
+pub fn load_agent_mentions_for_identity_linkage(
+) -> Result<Vec<AgentMentionForIdentityLinkage>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                mention_id,
+                agent_name,
+                COALESCE(category, 'unknown'),
+                COALESCE(source_snippet, '')
+            FROM agent_mentions
+            WHERE entity_id IS NULL
+                OR identity_resolution_status IS NULL
+                OR identity_resolution_status IN ('unresolved', 'missing_alias')
+            ORDER BY detected_at, mention_id
+            "#,
+        )
+        .map_err(|error| format!("DuckDB identity linkage query preparation failed: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AgentMentionForIdentityLinkage {
+                mention_id: row.get(0)?,
+                agent_name: row.get(1)?,
+                category: row.get(2)?,
+                source_snippet: row.get(3)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB identity linkage query failed: {error}"))?;
+
+    let mut mentions = Vec::new();
+    for row in rows {
+        mentions.push(
+            row.map_err(|error| format!("DuckDB identity linkage row read failed: {error}"))?,
+        );
+    }
+    Ok(mentions)
+}
+
+pub fn save_mention_identity_resolutions(
+    resolutions: &[MentionIdentityResolution],
+) -> Result<usize, String> {
+    if resolutions.is_empty() {
+        return Ok(0);
+    }
+
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB identity linkage transaction failed: {error}"))?;
+    let mut updated_count = 0;
+
+    {
+        let mut statement = transaction
+            .prepare(
+                r#"
+                UPDATE agent_mentions
+                SET
+                    entity_id = CASE
+                        WHEN ?2 IS NULL THEN NULL
+                        ELSE CAST(?2 AS UUID)
+                    END,
+                    identity_resolution_status = ?3,
+                    identity_resolution_reason = ?4,
+                    identity_resolution_confidence = ?5,
+                    identity_resolved_at = CASE
+                        WHEN ?3 = 'resolved' THEN CURRENT_TIMESTAMP
+                        ELSE NULL
+                    END
+                WHERE mention_id = ?1
+                "#,
+            )
+            .map_err(|error| {
+                format!("DuckDB identity linkage update preparation failed: {error}")
+            })?;
+
+        for resolution in resolutions {
+            updated_count += statement
+                .execute(params![
+                    &resolution.mention_id,
+                    &resolution.entity_id,
+                    resolution.status.as_str(),
+                    &resolution.reason,
+                    resolution.confidence,
+                ])
+                .map_err(|error| format!("DuckDB identity linkage update failed: {error}"))?;
+        }
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB identity linkage commit failed: {error}"))?;
+    Ok(updated_count)
 }
 
 pub fn save_agent_mentions(mentions: &[DetectedAgentMention]) -> Result<usize, String> {
@@ -1438,6 +1950,176 @@ pub fn rebuild_weekly_agent_metrics() -> Result<usize, String> {
         .map_err(|error| format!("DuckDB weekly metrics count is invalid: {error}"))
 }
 
+pub fn rebuild_weekly_entity_metrics() -> Result<usize, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("DuckDB canonical weekly transaction failed: {error}"))?;
+
+    transaction
+        .execute("DELETE FROM weekly_entity_metrics", [])
+        .map_err(|error| format!("DuckDB canonical weekly reset failed: {error}"))?;
+    transaction
+        .execute(WEEKLY_ENTITY_METRICS_INSERT_SQL, [])
+        .map_err(|error| format!("DuckDB canonical weekly aggregation failed: {error}"))?;
+    let count: i64 = transaction
+        .query_row("SELECT COUNT(*) FROM weekly_entity_metrics", [], |row| {
+            row.get(0)
+        })
+        .map_err(|error| format!("DuckDB canonical weekly count failed: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("DuckDB canonical weekly commit failed: {error}"))?;
+
+    usize::try_from(count)
+        .map_err(|error| format!("DuckDB canonical weekly count is invalid: {error}"))
+}
+
+pub fn count_weekly_entity_metric_entities() -> Result<usize, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(DISTINCT entity_id) FROM weekly_entity_metrics",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("DuckDB canonical entity count failed: {error}"))?;
+    usize::try_from(count)
+        .map_err(|error| format!("DuckDB canonical entity count is invalid: {error}"))
+}
+
+pub fn count_identity_resolution_skips() -> Result<IdentityResolutionSkipCounts, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let counts: (i64, i64, i64, i64, i64) = connection
+        .query_row(
+            r#"
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE identity_resolution_status IS NULL
+                        OR identity_resolution_status = 'unresolved'
+                        OR (identity_resolution_status = 'resolved' AND entity_id IS NULL)
+                ),
+                COUNT(*) FILTER (WHERE identity_resolution_status = 'ambiguous'),
+                COUNT(*) FILTER (WHERE identity_resolution_status = 'missing_alias'),
+                COUNT(*) FILTER (WHERE identity_resolution_status = 'skipped'),
+                COUNT(*) FILTER (
+                    WHERE identity_resolution_status = 'resolved'
+                        AND entity_id IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM canonical_entities entities
+                            WHERE entities.entity_id = agent_mentions.entity_id
+                                AND entities.status = 'active'
+                        )
+                )
+            FROM agent_mentions
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .map_err(|error| format!("DuckDB identity skip count failed: {error}"))?;
+
+    Ok(IdentityResolutionSkipCounts {
+        unresolved: i64_to_usize(counts.0)
+            .map_err(|error| format!("Invalid unresolved mention count: {error}"))?,
+        ambiguous: i64_to_usize(counts.1)
+            .map_err(|error| format!("Invalid ambiguous mention count: {error}"))?,
+        missing_alias: i64_to_usize(counts.2)
+            .map_err(|error| format!("Invalid missing alias count: {error}"))?,
+        skipped: i64_to_usize(counts.3)
+            .map_err(|error| format!("Invalid skipped mention count: {error}"))?,
+        invalid_resolved: i64_to_usize(counts.4)
+            .map_err(|error| format!("Invalid resolved reference count: {error}"))?,
+    })
+}
+
+pub fn load_weekly_entity_metrics_by_region(
+    region: &str,
+    limit: usize,
+) -> Result<Vec<WeeklyEntityMetric>, String> {
+    let database_path = initialize_database()?;
+    let connection = open_connection(&database_path)?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                CAST(id AS VARCHAR),
+                CAST(week_start AS VARCHAR),
+                CAST(week_end AS VARCHAR),
+                CAST(entity_id AS VARCHAR),
+                canonical_name,
+                entity_type,
+                region,
+                mention_count,
+                positive_count,
+                neutral_count,
+                negative_count,
+                mixed_count,
+                cost_positive_count,
+                cost_negative_boros_count,
+                cost_mixed_count,
+                cost_not_mentioned_count,
+                source_count,
+                CAST(first_seen_at AS VARCHAR),
+                CAST(last_seen_at AS VARCHAR),
+                trend_score
+            FROM weekly_entity_metrics
+            WHERE region = ?1
+                AND week_start = (SELECT MAX(week_start) FROM weekly_entity_metrics)
+            ORDER BY trend_score DESC, mention_count DESC, canonical_name ASC
+            LIMIT ?2
+            "#,
+        )
+        .map_err(|error| format!("DuckDB canonical weekly query preparation failed: {error}"))?;
+    let rows = statement
+        .query_map(params![region, limit], |row| {
+            Ok(WeeklyEntityMetric {
+                rank: 0,
+                id: row.get(0)?,
+                week_start: row.get(1)?,
+                week_end: row.get(2)?,
+                entity_id: row.get(3)?,
+                canonical_name: row.get(4)?,
+                entity_type: row.get(5)?,
+                region: row.get(6)?,
+                mention_count: i64_to_usize(row.get(7)?)?,
+                positive_count: i64_to_usize(row.get(8)?)?,
+                neutral_count: i64_to_usize(row.get(9)?)?,
+                negative_count: i64_to_usize(row.get(10)?)?,
+                mixed_count: i64_to_usize(row.get(11)?)?,
+                cost_positive_count: i64_to_usize(row.get(12)?)?,
+                cost_negative_boros_count: i64_to_usize(row.get(13)?)?,
+                cost_mixed_count: i64_to_usize(row.get(14)?)?,
+                cost_not_mentioned_count: i64_to_usize(row.get(15)?)?,
+                source_count: i64_to_usize(row.get(16)?)?,
+                first_seen_at: row.get(17)?,
+                last_seen_at: row.get(18)?,
+                trend_score: row.get(19)?,
+            })
+        })
+        .map_err(|error| format!("DuckDB canonical weekly query failed: {error}"))?;
+
+    let mut metrics = Vec::new();
+    for row in rows {
+        let mut metric =
+            row.map_err(|error| format!("DuckDB canonical weekly row read failed: {error}"))?;
+        metric.rank = metrics.len() + 1;
+        metrics.push(metric);
+    }
+    Ok(metrics)
+}
+
 pub fn load_weekly_agent_metrics_by_region(
     region: &str,
     limit: usize,
@@ -1593,7 +2275,7 @@ pub fn load_weekly_agent_metrics(limit: usize) -> Result<Vec<WeeklyAgentMetric>,
     Ok(metrics)
 }
 
-fn initialize_database_at(database_path: &Path) -> Result<(), String> {
+pub(crate) fn initialize_database_at(database_path: &Path) -> Result<(), String> {
     ensure_parent_directory(database_path)?;
     let connection = open_connection(database_path)?;
     remove_legacy_compatibility_object(&connection)?;
@@ -1777,7 +2459,37 @@ fn normalize_optional_note(note: Option<String>) -> Option<String> {
 fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))
+        .map_err(|error| format!("DuckDB schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(MULTI_SOURCE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB multi-source schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(IDENTITY_PERSISTENCE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB identity schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(EXPLAINX_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB ExplainX schema initialization failed: {error}"))
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_legacy_schema_at(database_path: &Path) -> Result<(), String> {
+    ensure_parent_directory(database_path)?;
+    let connection = open_connection(database_path)?;
+    connection
+        .execute_batch(SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB legacy test schema initialization failed: {error}"))
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_imp01_schema_at(database_path: &Path) -> Result<(), String> {
+    ensure_parent_directory(database_path)?;
+    let connection = open_connection(database_path)?;
+    connection
+        .execute_batch(SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB legacy schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(MULTI_SOURCE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB IMP-01 schema initialization failed: {error}"))
 }
 
 fn open_connection(database_path: &Path) -> Result<Connection, String> {

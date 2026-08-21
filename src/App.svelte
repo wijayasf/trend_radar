@@ -84,6 +84,18 @@
   let isReplayingApify = false;
   let isImportingApifyCache = false;
   let apifyDatasetFilePath = '';
+  let explainxFilePath = '';
+  let explainxImportStatus = 'Idle';
+  let explainxImported = 0;
+  let explainxInserted = 0;
+  let explainxUpdated = 0;
+  let explainxSkipped = 0;
+  let explainxInvalid = 0;
+  let explainxLinkedExactAlias = 0;
+  let explainxReviewNeeded = 0;
+  let explainxUnlinked = 0;
+  let explainxImportPreview: ExplainXImportPreview[] = [];
+  let isImportingExplainX = false;
   let apifyActorId = 'none';
   let apifyActorRunId = 'none';
   let apifyFilteredOutTotal = 0;
@@ -121,6 +133,14 @@
   let savedMentions = 0;
   let isDetecting = false;
   let detectionPreview: AgentMentionPreview[] = [];
+  let identityLinkageStatus = 'Idle';
+  let identityResolvedCount = 0;
+  let identityMissingAliasCount = 0;
+  let identityAmbiguousCount = 0;
+  let identitySkippedCount = 0;
+  let identityErrorCount = 0;
+  let identityLinkagePreview: MentionIdentityLinkagePreview[] = [];
+  let isLinkingIdentities = false;
   let regionStatus = 'Idle';
   let regionPostsAnalyzed = 0;
   let indonesiaCount = 0;
@@ -153,6 +173,17 @@
   let topGlobal: WeeklyAgentMetric[] = [];
   let topUnknown: WeeklyAgentMetric[] = [];
   let isAggregatingWeeklyMetrics = false;
+  let canonicalWeeklyStatus = 'Idle';
+  let canonicalWeeklyRows = 0;
+  let canonicalResolvedEntities = 0;
+  let canonicalUnresolvedSkipped = 0;
+  let canonicalAmbiguousSkipped = 0;
+  let canonicalMissingAliasSkipped = 0;
+  let canonicalSkippedMentions = 0;
+  let canonicalTopIndonesia: WeeklyEntityMetric[] = [];
+  let canonicalTopGlobal: WeeklyEntityMetric[] = [];
+  let canonicalWeeklyErrors: string[] = [];
+  let isAggregatingCanonicalWeeklyMetrics = false;
   let markdownExportStatus = 'Idle';
   let csvExportStatus = 'Idle';
   let markdownExportPath = '';
@@ -284,6 +315,30 @@
     message: string;
   };
 
+  type ExplainXImportPreview = {
+    source_record_key: string;
+    name: string;
+    category: string;
+    tags: string[];
+    identity_status: string;
+    matched_canonical_entity: string;
+    reason: string;
+  };
+
+  type ExplainXImportResult = {
+    imported: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+    invalid: number;
+    linked_exact_alias: number;
+    review_needed: number;
+    unlinked: number;
+    ingestion_batch_id: string;
+    message: string;
+    sample_records: ExplainXImportPreview[];
+  };
+
   type ApifyFilterReasons = {
     no_named_entity: number;
     recruitment_or_job_post: number;
@@ -332,6 +387,23 @@
     saved_count: number;
     message: string;
     preview: AgentMentionPreview[];
+  };
+
+  type MentionIdentityLinkagePreview = {
+    mention_name: string;
+    resolution_status: string;
+    canonical_entity_name: string;
+    reason: string;
+  };
+
+  type MentionIdentityLinkageResult = {
+    resolved_count: number;
+    missing_alias_count: number;
+    ambiguous_count: number;
+    skipped_count: number;
+    error_count: number;
+    message: string;
+    preview: MentionIdentityLinkagePreview[];
   };
 
   type SentimentClassificationResult = {
@@ -386,6 +458,43 @@
     top_indonesia: WeeklyAgentMetric[];
     top_global: WeeklyAgentMetric[];
     top_unknown: WeeklyAgentMetric[];
+    message: string;
+  };
+
+  type WeeklyEntityMetric = {
+    rank: number;
+    id: string;
+    week_start: string;
+    week_end: string;
+    entity_id: string;
+    canonical_name: string;
+    entity_type: string;
+    region: string;
+    mention_count: number;
+    positive_count: number;
+    neutral_count: number;
+    negative_count: number;
+    mixed_count: number;
+    cost_positive_count: number;
+    cost_negative_boros_count: number;
+    cost_mixed_count: number;
+    cost_not_mentioned_count: number;
+    source_count: number;
+    first_seen_at: string;
+    last_seen_at: string;
+    trend_score: number;
+  };
+
+  type WeeklyEntityAggregationResult = {
+    canonical_rows_generated: number;
+    resolved_entities_included: number;
+    unresolved_mentions_skipped: number;
+    ambiguous_mentions_skipped: number;
+    missing_alias_mentions_skipped: number;
+    skipped_mentions_skipped: number;
+    top_indonesia: WeeklyEntityMetric[];
+    top_global: WeeklyEntityMetric[];
+    errors: string[];
     message: string;
   };
 
@@ -683,6 +792,13 @@
       mentionsFound = 0;
       savedMentions = 0;
       detectionPreview = [];
+      identityLinkageStatus = 'Idle';
+      identityResolvedCount = 0;
+      identityMissingAliasCount = 0;
+      identityAmbiguousCount = 0;
+      identitySkippedCount = 0;
+      identityErrorCount = 0;
+      identityLinkagePreview = [];
       regionPostsAnalyzed = 0;
       indonesiaCount = 0;
       globalCount = 0;
@@ -707,6 +823,16 @@
       topIndonesia = [];
       topGlobal = [];
       topUnknown = [];
+      canonicalWeeklyStatus = 'Idle';
+      canonicalWeeklyRows = 0;
+      canonicalResolvedEntities = 0;
+      canonicalUnresolvedSkipped = 0;
+      canonicalAmbiguousSkipped = 0;
+      canonicalMissingAliasSkipped = 0;
+      canonicalSkippedMentions = 0;
+      canonicalTopIndonesia = [];
+      canonicalTopGlobal = [];
+      canonicalWeeklyErrors = [];
       resetDiscoveryDiagnostics();
       await loadCandidateEntities();
     } catch (error) {
@@ -1018,6 +1144,35 @@
     }
   }
 
+  async function importExplainXRecords() {
+    const filePath = explainxFilePath.trim();
+    if (!filePath || isImportingExplainX || isFullFlowRunning()) return;
+
+    isImportingExplainX = true;
+    explainxImportStatus = 'Importing ExplainX records...';
+    explainxImportPreview = [];
+
+    try {
+      const result = await invoke<ExplainXImportResult>('import_explainx_records', {
+        filePath,
+      });
+      explainxImported = result.imported;
+      explainxInserted = result.inserted;
+      explainxUpdated = result.updated;
+      explainxSkipped = result.skipped;
+      explainxInvalid = result.invalid;
+      explainxLinkedExactAlias = result.linked_exact_alias;
+      explainxReviewNeeded = result.review_needed;
+      explainxUnlinked = result.unlinked;
+      explainxImportPreview = result.sample_records;
+      explainxImportStatus = result.message;
+    } catch (error) {
+      explainxImportStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isImportingExplainX = false;
+    }
+  }
+
   async function testDiscoverySeed() {
     const keyword = discoverySeedTestKeyword.trim();
     if (!keyword || isTestingDiscoverySeed || isReplayingApify || isFullFlowRunning()) return;
@@ -1095,6 +1250,36 @@
       detectStatus = `error: ${friendlyError(error)}`;
     } finally {
       isDetecting = false;
+    }
+  }
+
+  async function linkAgentMentionsToEntities() {
+    if (isLinkingIdentities) return;
+
+    isLinkingIdentities = true;
+    identityLinkageStatus = 'Linking mentions to canonical entities...';
+    identityResolvedCount = 0;
+    identityMissingAliasCount = 0;
+    identityAmbiguousCount = 0;
+    identitySkippedCount = 0;
+    identityErrorCount = 0;
+    identityLinkagePreview = [];
+
+    try {
+      const result = await invoke<MentionIdentityLinkageResult>(
+        'link_agent_mentions_to_entities',
+      );
+      identityResolvedCount = result.resolved_count;
+      identityMissingAliasCount = result.missing_alias_count;
+      identityAmbiguousCount = result.ambiguous_count;
+      identitySkippedCount = result.skipped_count;
+      identityErrorCount = result.error_count;
+      identityLinkagePreview = result.preview;
+      identityLinkageStatus = result.message;
+    } catch (error) {
+      identityLinkageStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isLinkingIdentities = false;
     }
   }
 
@@ -1210,6 +1395,42 @@
       weeklyStatus = `error: ${friendlyError(error)}`;
     } finally {
       isAggregatingWeeklyMetrics = false;
+    }
+  }
+
+  async function aggregateCanonicalWeeklyMetrics() {
+    if (isAggregatingCanonicalWeeklyMetrics) return;
+
+    isAggregatingCanonicalWeeklyMetrics = true;
+    canonicalWeeklyStatus = 'Aggregating canonical weekly metrics...';
+    canonicalWeeklyRows = 0;
+    canonicalResolvedEntities = 0;
+    canonicalUnresolvedSkipped = 0;
+    canonicalAmbiguousSkipped = 0;
+    canonicalMissingAliasSkipped = 0;
+    canonicalSkippedMentions = 0;
+    canonicalTopIndonesia = [];
+    canonicalTopGlobal = [];
+    canonicalWeeklyErrors = [];
+
+    try {
+      const result = await invoke<WeeklyEntityAggregationResult>(
+        'aggregate_weekly_entity_metrics',
+      );
+      canonicalWeeklyRows = result.canonical_rows_generated;
+      canonicalResolvedEntities = result.resolved_entities_included;
+      canonicalUnresolvedSkipped = result.unresolved_mentions_skipped;
+      canonicalAmbiguousSkipped = result.ambiguous_mentions_skipped;
+      canonicalMissingAliasSkipped = result.missing_alias_mentions_skipped;
+      canonicalSkippedMentions = result.skipped_mentions_skipped;
+      canonicalTopIndonesia = result.top_indonesia;
+      canonicalTopGlobal = result.top_global;
+      canonicalWeeklyErrors = result.errors;
+      canonicalWeeklyStatus = result.message;
+    } catch (error) {
+      canonicalWeeklyStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isAggregatingCanonicalWeeklyMetrics = false;
     }
   }
 
@@ -1690,6 +1911,72 @@
       {/if}
     </section>
 
+    <section class="collector-panel" aria-label="ExplainX import">
+      <div>
+        <p class="panel-label">1. Source Import</p>
+        <h2>ExplainX Import</h2>
+        <p class="panel-note">
+          Import local ExplainX JSON as structured registry evidence. Exact aliases create pending
+          identity links only; ambiguous and child-resource records remain reviewable.
+        </p>
+      </div>
+
+      <form on:submit|preventDefault={importExplainXRecords}>
+        <label for="explainx-file">ExplainX JSON file</label>
+        <div class="collector-row import-row">
+          <input
+            id="explainx-file"
+            type="text"
+            bind:value={explainxFilePath}
+            placeholder="/path/to/explainx-records.json"
+            disabled={isImportingExplainX || isFullFlowRunning()}
+          />
+          <button
+            type="submit"
+            disabled={!explainxFilePath.trim() || isImportingExplainX || isFullFlowRunning()}
+          >
+            {#if isImportingExplainX}
+              {@render LoadingLabel('Importing...')}
+            {:else}
+              Import ExplainX Records
+            {/if}
+          </button>
+        </div>
+      </form>
+
+      <div class="collector-result" aria-live="polite">
+        <span>Status: {explainxImportStatus}</span>
+        <span>Imported: {explainxImported}</span>
+        <span>Inserted: {explainxInserted}</span>
+        <span>Updated: {explainxUpdated}</span>
+        <span>Unchanged: {explainxSkipped}</span>
+        <span>Invalid: {explainxInvalid}</span>
+        <span>Linked exact alias: {explainxLinkedExactAlias}</span>
+        <span>Review needed: {explainxReviewNeeded}</span>
+        <span>Unlinked: {explainxUnlinked}</span>
+      </div>
+
+      {#if explainxImportPreview.length > 0}
+        <div class="mention-preview" aria-label="ExplainX import preview">
+          {#each explainxImportPreview as record}
+            <article class="mention-row">
+              <div>
+                <strong>{record.name}</strong>
+                <span>{record.category}</span>
+                <span>{record.source_record_key}</span>
+                <span>Tags: {record.tags.length > 0 ? record.tags.join(', ') : 'none'}</span>
+              </div>
+              <p>{record.reason}</p>
+              <div>
+                <strong>{record.identity_status}</strong>
+                <span>Canonical: {record.matched_canonical_entity}</span>
+              </div>
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
     <section class="collector-panel" aria-label="Threads keyword collector">
       <div>
         <p class="panel-label">1. Discovery</p>
@@ -1799,6 +2086,56 @@
               </div>
               <p>{mention.source_snippet}</p>
               <span class="confidence">{Math.round(mention.confidence * 100)}%</span>
+            </article>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <section class="detector-panel" aria-label="Mention identity linkage">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">2. Identity Linkage</p>
+          <h2>Link mentions to canonical entities</h2>
+          <p class="panel-note">
+            Resolve detected names through active, source-aware aliases while preserving the
+            original mention text.
+          </p>
+        </div>
+        <button
+          type="button"
+          on:click={linkAgentMentionsToEntities}
+          disabled={isLinkingIdentities || isFullFlowRunning()}
+        >
+          {#if isLinkingIdentities}
+            {@render LoadingLabel('Linking...')}
+          {:else}
+            Link Mentions to Canonical Entities
+          {/if}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {identityLinkageStatus}</span>
+        <span>Resolved: {identityResolvedCount}</span>
+        <span>Missing alias: {identityMissingAliasCount}</span>
+        <span>Ambiguous: {identityAmbiguousCount}</span>
+        <span>Skipped: {identitySkippedCount}</span>
+        <span>Errors: {identityErrorCount}</span>
+      </div>
+
+      {#if identityLinkagePreview.length > 0}
+        <div class="mention-preview" aria-label="Identity linkage preview">
+          {#each identityLinkagePreview as item}
+            <article class="mention-row">
+              <div>
+                <strong>{item.mention_name}</strong>
+                <span>{item.resolution_status}</span>
+                {#if item.canonical_entity_name}
+                  <span>Canonical: {item.canonical_entity_name}</span>
+                {/if}
+              </div>
+              <p>{item.reason}</p>
             </article>
           {/each}
         </div>
@@ -2120,6 +2457,54 @@
       </div>
     </section>
 
+    <section class="detector-panel" aria-label="Canonical weekly metrics">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">5. Canonical Weekly Metrics</p>
+          <h2>Aggregate Canonical Weekly Metrics</h2>
+          <p class="panel-note">
+            Roll resolved aliases into one canonical entity row per week and region. Ambiguous or
+            unresolved mentions remain excluded.
+          </p>
+        </div>
+        <button
+          type="button"
+          on:click={aggregateCanonicalWeeklyMetrics}
+          disabled={isAggregatingCanonicalWeeklyMetrics || isFullFlowRunning()}
+        >
+          {#if isAggregatingCanonicalWeeklyMetrics}
+            {@render LoadingLabel('Aggregating...')}
+          {:else}
+            Aggregate Canonical Weekly Metrics
+          {/if}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {canonicalWeeklyStatus}</span>
+        <span>Canonical rows: {canonicalWeeklyRows}</span>
+        <span>Resolved entities: {canonicalResolvedEntities}</span>
+        <span>Unresolved skipped: {canonicalUnresolvedSkipped}</span>
+        <span>Missing alias skipped: {canonicalMissingAliasSkipped}</span>
+        <span>Ambiguous skipped: {canonicalAmbiguousSkipped}</span>
+        <span>Other skipped: {canonicalSkippedMentions}</span>
+        {#if canonicalWeeklyErrors.length > 0}
+          <span>Errors: {canonicalWeeklyErrors.join(' | ')}</span>
+        {/if}
+      </div>
+
+      <div class="metrics-groups">
+        <div>
+          <h3>Top Indonesia</h3>
+          {@render CanonicalMetricTable(canonicalTopIndonesia)}
+        </div>
+        <div>
+          <h3>Top Global</h3>
+          {@render CanonicalMetricTable(canonicalTopGlobal)}
+        </div>
+      </div>
+    </section>
+
     <section class="detector-panel" aria-label="Report export">
       <div class="detector-header">
         <div>
@@ -2183,6 +2568,51 @@
     <span class="loading-spinner" aria-hidden="true"></span>
     {label}
   </span>
+{/snippet}
+
+{#snippet CanonicalMetricTable(metrics: WeeklyEntityMetric[])}
+  {#if metrics.length > 0}
+    <div class="metrics-table-wrap">
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Canonical entity</th>
+            <th>Type</th>
+            <th>Region</th>
+            <th>Mentions</th>
+            <th>Sentiment + / 0 / - / mixed</th>
+            <th>Cost + / boros / mixed / none</th>
+            <th>Sources</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each metrics as metric}
+            <tr>
+              <td>{metric.rank}</td>
+              <td>{metric.canonical_name}</td>
+              <td>{metric.entity_type}</td>
+              <td>{metric.region}</td>
+              <td>{metric.mention_count}</td>
+              <td>
+                {metric.positive_count} / {metric.neutral_count} / {metric.negative_count} /
+                {metric.mixed_count}
+              </td>
+              <td>
+                {metric.cost_positive_count} / {metric.cost_negative_boros_count} /
+                {metric.cost_mixed_count} / {metric.cost_not_mentioned_count}
+              </td>
+              <td>{metric.source_count}</td>
+              <td>{metric.trend_score.toFixed(1)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <p class="empty-state">No canonical metrics yet.</p>
+  {/if}
 {/snippet}
 
 {#snippet MetricTable(metrics: WeeklyAgentMetric[])}
