@@ -642,6 +642,21 @@ h1 {
   text-transform: uppercase;
 }
 
+.cross-source-table {
+  min-width: 1180px;
+}
+
+.cross-source-table .score-explanation {
+  min-width: 280px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.diagnostic-groups {
+  padding-top: 4px;
+  border-top: 1px solid rgba(24, 32, 36, 0.1);
+}
+
 .empty-state {
   margin: 0;
   color: #687478;

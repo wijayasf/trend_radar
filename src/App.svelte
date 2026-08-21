@@ -196,6 +196,20 @@
   let canonicalTopGlobal: WeeklyEntityMetric[] = [];
   let canonicalWeeklyErrors: string[] = [];
   let isAggregatingCanonicalWeeklyMetrics = false;
+  let crossSourceStatus = 'Idle';
+  let crossSourceScoreVersion = 'none';
+  let crossSourceWeek = 'none';
+  let crossSourceScoredRows = 0;
+  let crossSourceTrustedRows = 0;
+  let crossSourceWatchlistRows = 0;
+  let crossSourceNeedsReviewRows = 0;
+  let crossSourceExcludedRows = 0;
+  let crossSourceTopIndonesia: CrossSourceScorePreview[] = [];
+  let crossSourceTopGlobal: CrossSourceScorePreview[] = [];
+  let crossSourceWatchlist: CrossSourceScoreDiagnostic[] = [];
+  let crossSourceNeedsReview: CrossSourceScoreDiagnostic[] = [];
+  let crossSourceExcluded: CrossSourceScoreDiagnostic[] = [];
+  let isAggregatingCrossSourceScores = false;
   let markdownExportStatus = 'Idle';
   let csvExportStatus = 'Idle';
   let markdownExportPath = '';
@@ -584,6 +598,60 @@
     message: string;
   };
 
+  type CrossSourceScorePreview = {
+    rank: number;
+    score_version: string;
+    week_start: string;
+    week_end: string;
+    entity_id: string;
+    canonical_name: string;
+    entity_type: string;
+    region: string;
+    mention_count: number;
+    approved_registry_record_count: number;
+    conversation_source_count: number;
+    conversation_score: number;
+    registry_score: number;
+    source_diversity_score: number;
+    review_confidence_score: number;
+    recency_score: number;
+    cost_adjustment: number;
+    sentiment_adjustment: number;
+    cross_source_score: number;
+    ranking_label: string;
+    factor_breakdown_json: string;
+    source_evidence_json: string;
+    explanation: string;
+  };
+
+  type CrossSourceScoreDiagnostic = {
+    entity_name: string;
+    entity_type: string | null;
+    region: string | null;
+    ranking_label: string;
+    reason: string;
+    source_record_key: string | null;
+  };
+
+  type CrossSourceScoreAggregationResult = {
+    score_version: string;
+    week_start: string | null;
+    week_end: string | null;
+    scored_rows: number;
+    trusted_ranking_rows: number;
+    watchlist_rows: number;
+    needs_review_rows: number;
+    excluded_rows: number;
+    top_global: CrossSourceScorePreview[];
+    top_indonesia: CrossSourceScorePreview[];
+    factor_breakdown_preview: CrossSourceScorePreview[];
+    watchlist: CrossSourceScoreDiagnostic[];
+    needs_review: CrossSourceScoreDiagnostic[];
+    excluded_from_score: CrossSourceScoreDiagnostic[];
+    fixture_validation: unknown | null;
+    message: string;
+  };
+
   type ReportExportResult = {
     file_path: string;
     rows_exported: number;
@@ -920,6 +988,19 @@
       canonicalTopIndonesia = [];
       canonicalTopGlobal = [];
       canonicalWeeklyErrors = [];
+      crossSourceStatus = 'Idle';
+      crossSourceScoreVersion = 'none';
+      crossSourceWeek = 'none';
+      crossSourceScoredRows = 0;
+      crossSourceTrustedRows = 0;
+      crossSourceWatchlistRows = 0;
+      crossSourceNeedsReviewRows = 0;
+      crossSourceExcludedRows = 0;
+      crossSourceTopIndonesia = [];
+      crossSourceTopGlobal = [];
+      crossSourceWatchlist = [];
+      crossSourceNeedsReview = [];
+      crossSourceExcluded = [];
       resetDiscoveryDiagnostics();
       await loadCandidateEntities();
     } catch (error) {
@@ -1624,6 +1705,48 @@
       canonicalWeeklyStatus = `error: ${friendlyError(error)}`;
     } finally {
       isAggregatingCanonicalWeeklyMetrics = false;
+    }
+  }
+
+  async function aggregateCrossSourceScores() {
+    if (isAggregatingCrossSourceScores) return;
+
+    isAggregatingCrossSourceScores = true;
+    crossSourceStatus = 'Aggregating cross-source scores...';
+    crossSourceScoredRows = 0;
+    crossSourceTrustedRows = 0;
+    crossSourceWatchlistRows = 0;
+    crossSourceNeedsReviewRows = 0;
+    crossSourceExcludedRows = 0;
+    crossSourceTopIndonesia = [];
+    crossSourceTopGlobal = [];
+    crossSourceWatchlist = [];
+    crossSourceNeedsReview = [];
+    crossSourceExcluded = [];
+
+    try {
+      const result = await invoke<CrossSourceScoreAggregationResult>(
+        'aggregate_cross_source_entity_scores',
+      );
+      crossSourceScoreVersion = result.score_version;
+      crossSourceWeek = result.week_start
+        ? `${result.week_start} to ${result.week_end ?? result.week_start}`
+        : 'none';
+      crossSourceScoredRows = result.scored_rows;
+      crossSourceTrustedRows = result.trusted_ranking_rows;
+      crossSourceWatchlistRows = result.watchlist_rows;
+      crossSourceNeedsReviewRows = result.needs_review_rows;
+      crossSourceExcludedRows = result.excluded_rows;
+      crossSourceTopIndonesia = result.top_indonesia;
+      crossSourceTopGlobal = result.top_global;
+      crossSourceWatchlist = result.watchlist;
+      crossSourceNeedsReview = result.needs_review;
+      crossSourceExcluded = result.excluded_from_score;
+      crossSourceStatus = result.message;
+    } catch (error) {
+      crossSourceStatus = `error: ${friendlyError(error)}`;
+    } finally {
+      isAggregatingCrossSourceScores = false;
     }
   }
 
@@ -2878,6 +3001,69 @@
       </div>
     </section>
 
+    <section class="detector-panel" aria-label="Cross-source score preview">
+      <div class="detector-header">
+        <div>
+          <p class="panel-label">5. Cross-source Score Preview</p>
+          <h2>Aggregate Cross-source Scores</h2>
+          <p class="panel-note">
+            Combine resolved canonical conversation metrics with explicitly approved ExplainX
+            same-entity evidence. Watchlist and review-needed evidence stays outside ranking.
+          </p>
+        </div>
+        <button
+          type="button"
+          on:click={aggregateCrossSourceScores}
+          disabled={isAggregatingCrossSourceScores || isFullFlowRunning()}
+        >
+          {#if isAggregatingCrossSourceScores}
+            {@render LoadingLabel('Scoring...')}
+          {:else}
+            Aggregate Cross-source Scores
+          {/if}
+        </button>
+      </div>
+
+      <div class="collector-result detector-result" aria-live="polite">
+        <span>Status: {crossSourceStatus}</span>
+        <span>Version: {crossSourceScoreVersion}</span>
+        <span>Week: {crossSourceWeek}</span>
+        <span>Scored rows: {crossSourceScoredRows}</span>
+        <span>Trusted ranking: {crossSourceTrustedRows}</span>
+        <span>Watchlist: {crossSourceWatchlistRows}</span>
+        <span>Needs review: {crossSourceNeedsReviewRows}</span>
+        <span>Excluded: {crossSourceExcludedRows}</span>
+      </div>
+
+      <div class="metrics-groups">
+        <div>
+          <h3>Top Indonesia</h3>
+          {@render CrossSourceScoreTable(crossSourceTopIndonesia)}
+        </div>
+        <div>
+          <h3>Top Global</h3>
+          {@render CrossSourceScoreTable(crossSourceTopGlobal)}
+        </div>
+      </div>
+
+      <div class="metrics-groups diagnostic-groups">
+        <div>
+          <h3>Watchlist</h3>
+          {@render CrossSourceDiagnosticList(crossSourceWatchlist)}
+        </div>
+        <div>
+          <h3>Needs Review</h3>
+          {@render CrossSourceDiagnosticList(crossSourceNeedsReview)}
+        </div>
+        {#if crossSourceExcluded.length > 0}
+          <div>
+            <h3>Excluded from Score</h3>
+            {@render CrossSourceDiagnosticList(crossSourceExcluded)}
+          </div>
+        {/if}
+      </div>
+    </section>
+
     <section class="detector-panel" aria-label="Report export">
       <div class="detector-header">
         <div>
@@ -2985,6 +3171,76 @@
     </div>
   {:else}
     <p class="empty-state">No canonical metrics yet.</p>
+  {/if}
+{/snippet}
+
+{#snippet CrossSourceScoreTable(metrics: CrossSourceScorePreview[])}
+  {#if metrics.length > 0}
+    <div class="metrics-table-wrap">
+      <table class="metrics-table cross-source-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Entity</th>
+            <th>Type</th>
+            <th>Region</th>
+            <th>Score</th>
+            <th>Label</th>
+            <th>Conversation</th>
+            <th>Registry</th>
+            <th>Review</th>
+            <th>Sentiment adj.</th>
+            <th>Cost adj.</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each metrics as metric}
+            <tr>
+              <td>{metric.rank}</td>
+              <td>{metric.canonical_name}</td>
+              <td>{metric.entity_type}</td>
+              <td>{metric.region}</td>
+              <td>{metric.cross_source_score.toFixed(2)}</td>
+              <td>{metric.ranking_label}</td>
+              <td>{metric.conversation_score.toFixed(2)}</td>
+              <td>{metric.registry_score.toFixed(0)}</td>
+              <td>{metric.review_confidence_score.toFixed(0)}</td>
+              <td>{metric.sentiment_adjustment.toFixed(2)}</td>
+              <td>{metric.cost_adjustment.toFixed(2)}</td>
+              <td class="score-explanation" title={metric.source_evidence_json}>
+                {metric.explanation}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <p class="empty-state">No trusted cross-source scores yet.</p>
+  {/if}
+{/snippet}
+
+{#snippet CrossSourceDiagnosticList(items: CrossSourceScoreDiagnostic[])}
+  {#if items.length > 0}
+    <div class="mention-preview">
+      {#each items as item}
+        <article class="mention-row">
+          <div>
+            <strong>{item.entity_name}</strong>
+            <span>
+              {item.ranking_label}
+              {#if item.entity_type} · {item.entity_type}{/if}
+              {#if item.region} · {item.region}{/if}
+            </span>
+          </div>
+          <p>{item.reason}</p>
+          <span class="confidence">{item.source_record_key ?? 'local'}</span>
+        </article>
+      {/each}
+    </div>
+  {:else}
+    <p class="empty-state">No diagnostics in this category.</p>
   {/if}
 {/snippet}
 

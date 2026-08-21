@@ -1,37 +1,39 @@
 # Latest Handoff
 
 Date: 2026-08-21
-Session: 056-imp-07-implementation-brief
+Session: 057-imp-07-cross-source-score-prototype
 Agent: Codex
 
 ## Current State
 
-PR #1, PR #2, and PR #3 are merged on `main` at `e41d1b7`. DESIGN-01 and CAL-01 are approved as the IMP-07 design and deterministic test oracle. A documentation-only implementation brief now lives on `planning/imp-07-cross-source-score-prototype`. IMP-07 has not started.
+PR #1 through PR #4 are merged on `main`. IMP-07 is implemented and fully validated on `feature/imp-07-cross-source-score-prototype` from the approved DESIGN-01, CAL-01 fixture, and merged implementation brief. Commit, push, draft PR, and human review remain pending.
 
 ## Key Changes
 
-- Added an implementation-ready brief for the smallest safe cross-source score prototype.
-- Proposed an additive, versioned, transactional `cross_source_entity_scores` table without changing either existing weekly table.
-- Required resolved active canonical identity and current regional conversation evidence for trusted ranking.
-- Limited registry contribution to approved ExplainX `same_entity` links.
-- Kept watchlist, needs-review, and excluded cases as non-persisted diagnostics so registry-only and unresolved evidence cannot become ranked rows.
-- Defined the aggregator service, Tauri command, read-only preview, fixture tests, compatibility gates, risks, and safe implementation order.
+- Added additive, versioned, transactional `cross_source_entity_scores` persistence.
+- Added deterministic conversation, registry, source-diversity, review-confidence, recency, sentiment, and cost factors under `cross-source-v1-proposal`.
+- Added `aggregate_cross_source_entity_scores()` with separate Indonesia/Global ranking and non-ranked diagnostics.
+- Added a read-only Cross-source Score Preview panel.
+- Added fixture oracle, registry gate, idempotency, additive schema, weekly compatibility, historical-week preservation, and rollback tests using unique scoped DuckDB paths.
+- Preserved collectors, identity semantics, weekly tables, and report export behavior.
 
 ## Validation Snapshot
 
-- Frontend build, Rust formatting, locked check, locked parallel tests, diff check, and tracked-file secret scan passed.
-- Rust result: 86 passed, 0 failed, 1 intentionally ignored live Threads test; seven unchanged dead-code warnings remain.
-- No application code, runtime schema, score implementation, collector, classifier, review, report, or live API behavior changed.
+- Targeted cross-source tests passed: 5 passed, 0 failed.
+- Frontend build, Rust format, locked check, diff check, and tracked-file secret scan passed; seven unchanged dead-code warnings remain.
+- Parallel and serial suites each passed: 91 passed, 0 failed, 1 intentionally ignored live Threads test.
+- Diff inspection found no `DATABASE_PATH` environment mutation.
+- No live Threads, Apify, or ExplainX call ran.
 
 ## Pending
 
-- Review and explicitly accept the IMP-07 implementation brief.
-- After acceptance, create a separate implementation branch and begin with additive schema plus pure fixture factor tests.
-- Do not include momentum, WoW, velocity, Programming Fit, LLM scoring, live ExplainX scraping, fuzzy merge, automatic approval, weekly-table replacement, or report changes in IMP-07.
+- Commit, push, and open the IMP-07 draft PR.
+- Review schema additivity, fixture score parity, registry gating, diagnostics, and UI explainability before merge.
+- Do not start momentum, WoW, velocity, or Programming Fit work.
 
 ## Risk Note
 
-The fixture locks the prototype formula and score version. ExplainX registry presence must remain conversation-gated and capped, sparse Indonesia data must remain independently normalized, and non-ranked diagnostic cases must never be persisted as trusted score rows.
+The fixture locks the prototype formula and score version. Production recency decay remains uncalibrated, source diversity currently uses count-level weekly evidence, and non-ranked diagnostic cases must never be persisted as trusted score rows.
 
 ## Token Usage
 

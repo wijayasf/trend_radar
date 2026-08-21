@@ -621,6 +621,60 @@ CREATE INDEX IF NOT EXISTS idx_explainx_records_source_record
     ON explainx_records(source_record_id);
 "#;
 
+const CROSS_SOURCE_SCORE_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS cross_source_entity_scores (
+    id UUID PRIMARY KEY DEFAULT uuid(),
+    score_version TEXT NOT NULL,
+    week_start DATE NOT NULL,
+    week_end DATE NOT NULL,
+    entity_id UUID NOT NULL,
+    canonical_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    region TEXT NOT NULL,
+    mention_count BIGINT NOT NULL DEFAULT 0,
+    approved_registry_record_count BIGINT NOT NULL DEFAULT 0,
+    conversation_source_count BIGINT NOT NULL DEFAULT 0,
+    mention_count_score DOUBLE NOT NULL,
+    sentiment_score DOUBLE NOT NULL,
+    cost_signal_score DOUBLE NOT NULL,
+    region_signal_score DOUBLE NOT NULL,
+    conversation_score DOUBLE NOT NULL,
+    registry_score DOUBLE NOT NULL,
+    source_diversity_score DOUBLE NOT NULL,
+    review_confidence_score DOUBLE NOT NULL,
+    recency_score DOUBLE NOT NULL,
+    cost_adjustment DOUBLE NOT NULL,
+    sentiment_adjustment DOUBLE NOT NULL,
+    cross_source_score DOUBLE NOT NULL,
+    ranking_label TEXT NOT NULL,
+    factor_breakdown_json TEXT NOT NULL,
+    source_evidence_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (score_version, week_start, entity_id, region),
+    CHECK (region IN ('indonesia', 'global')),
+    CHECK (ranking_label = 'trusted_ranking'),
+    CHECK (mention_count_score BETWEEN 0.0 AND 100.0),
+    CHECK (sentiment_score BETWEEN 0.0 AND 100.0),
+    CHECK (cost_signal_score BETWEEN 0.0 AND 100.0),
+    CHECK (region_signal_score BETWEEN 0.0 AND 100.0),
+    CHECK (conversation_score BETWEEN 0.0 AND 100.0),
+    CHECK (registry_score BETWEEN 0.0 AND 100.0),
+    CHECK (source_diversity_score BETWEEN 0.0 AND 100.0),
+    CHECK (review_confidence_score BETWEEN 0.0 AND 100.0),
+    CHECK (recency_score BETWEEN 0.0 AND 100.0),
+    CHECK (cost_adjustment BETWEEN -50.0 AND 50.0),
+    CHECK (sentiment_adjustment BETWEEN -50.0 AND 50.0),
+    CHECK (cross_source_score BETWEEN 0.0 AND 100.0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cross_source_scores_region_score
+    ON cross_source_entity_scores(score_version, week_start, region, cross_source_score);
+
+CREATE INDEX IF NOT EXISTS idx_cross_source_scores_entity
+    ON cross_source_entity_scores(entity_id, week_start, score_version);
+"#;
+
 const LEGACY_COMPATIBILITY_OBJECT: &str = "agent_mentions_compatible";
 const LEGACY_LOCAL_DATABASE_MESSAGE: &str = "Legacy local DuckDB metadata detected. Stop the app and remove data/app.duckdb only if you want a clean local demo database.";
 
@@ -1138,6 +1192,9 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
         .execute("DELETE FROM weekly_agent_metrics", [])
         .map_err(|error| reset_error("weekly metrics", error))?;
     connection
+        .execute("DELETE FROM cross_source_entity_scores", [])
+        .map_err(|error| reset_error("cross-source scores", error))?;
+    connection
         .execute("DELETE FROM weekly_entity_metrics", [])
         .map_err(|error| reset_error("canonical weekly metrics", error))?;
     if table_exists(&connection, "crawl_seed_results")? {
@@ -1152,7 +1209,7 @@ pub fn reset_local_pipeline_data() -> Result<String, String> {
         .execute("DELETE FROM threads_posts_raw", [])
         .map_err(|error| reset_error("raw post", error))?;
 
-    Ok("Cleared local demo data: raw posts, mentions, crawl runs, weekly metrics, and canonical weekly metrics. Candidate decisions were preserved.".to_string())
+    Ok("Cleared local demo data: raw posts, mentions, crawl runs, weekly metrics, canonical weekly metrics, and cross-source scores. Candidate decisions were preserved.".to_string())
 }
 
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool, String> {
@@ -2468,7 +2525,10 @@ fn run_schema_initialization(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("DuckDB identity schema initialization failed: {error}"))?;
     connection
         .execute_batch(EXPLAINX_SCHEMA_SQL)
-        .map_err(|error| format!("DuckDB ExplainX schema initialization failed: {error}"))
+        .map_err(|error| format!("DuckDB ExplainX schema initialization failed: {error}"))?;
+    connection
+        .execute_batch(CROSS_SOURCE_SCORE_SCHEMA_SQL)
+        .map_err(|error| format!("DuckDB cross-source score schema initialization failed: {error}"))
 }
 
 #[cfg(test)]
