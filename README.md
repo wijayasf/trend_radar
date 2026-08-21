@@ -187,6 +187,12 @@ same-entity link for review; child resources such as MCP servers, skills, plugin
 remain review-needed. Ambiguous names such as `Codex` and records with no known alias are never
 merged automatically. ExplainX import does not change weekly metrics or Candidate Review.
 
+The `External Identity Review` panel lists imported ExplainX identity candidates with source and
+canonical metadata. Reviewers can explicitly approve, reject, or mark a relationship ambiguous,
+select its relationship type, and inspect append-only decision history. These decisions update the
+effective source/entity link transactionally; they do not auto-approve Candidate Review items or
+change the existing weekly metrics pipeline.
+
 ## Review Web Demo
 
 A lightweight web demo is available under `apps/review-web` for Threads App Review demonstration. It uses server-side environment variables and does not expose access tokens to the browser.

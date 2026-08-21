@@ -302,6 +302,9 @@ Append-only service-level history of explicit decisions about a `source_record_e
 - Repository operations expose append and chronological read only. Existing audit rows are never updated by the review service.
 - Audit insertion, effective link update, review timestamp, and source-record resolution reconciliation occur in one DuckDB transaction.
 - Confidence remains diagnostic and never auto-approves a relationship.
+- The desktop review commands list ExplainX link candidates, submit explicit decisions through the transactional repository operation, and expose chronological history. They do not write audit rows directly.
+- The review list joins source-specific ExplainX metadata with canonical entity metadata for presentation only. No compatibility view or additional persistence table is required.
+- Invalid link IDs, relationship values, decisions, or blank reviewers fail before an effective state change; a successful later decision appends history rather than replacing an earlier decision.
 
 DuckDB currently rejects updates to a parent row referenced by a foreign key, even when the parent key itself is unchanged. Because the review transaction must append an audit row before updating the effective link and source-record resolution, this audit table intentionally has no database foreign-key constraints. The repository first loads the link and copies its link, source-record, and entity IDs inside the same transaction, preserving referential integrity at the service boundary. The `entity_aliases` foreign key is unaffected.
 

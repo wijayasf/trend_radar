@@ -500,6 +500,109 @@ h1 {
   text-align: right;
 }
 
+.external-review-list {
+  display: grid;
+  gap: 12px;
+}
+
+.external-review-item {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(24, 32, 36, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.external-review-item p {
+  margin: 0;
+  color: #4e5a5f;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.external-review-summary,
+.external-review-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.external-review-summary strong,
+.external-review-summary span {
+  display: block;
+}
+
+.external-review-summary strong {
+  color: #182024;
+}
+
+.external-review-summary span,
+.review-history > span {
+  margin-top: 4px;
+  color: #687478;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.external-review-controls label {
+  display: grid;
+  gap: 6px;
+  color: #4e5a5f;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.external-review-controls input,
+.external-review-controls select {
+  min-width: 0;
+  height: 42px;
+  border: 1px solid rgba(24, 32, 36, 0.18);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: #182024;
+  font: inherit;
+}
+
+.external-review-actions {
+  justify-content: flex-start;
+}
+
+.review-state {
+  text-transform: capitalize;
+}
+
+.review-state-approved {
+  color: #27606d !important;
+}
+
+.review-state-rejected {
+  color: #9b3b31 !important;
+}
+
+.review-state-ambiguous,
+.review-state-pending {
+  color: #8a641f !important;
+}
+
+.review-evidence {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem !important;
+}
+
+.review-history {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(24, 32, 36, 0.1);
+}
+
+.review-history-table {
+  min-width: 840px;
+}
+
 .metrics-groups {
   display: grid;
   gap: 16px;
@@ -591,6 +694,8 @@ h1 {
   .discovery-row,
   .detector-header,
   .mention-row,
+  .external-review-summary,
+  .external-review-controls,
   .reset-panel {
     grid-template-columns: 1fr;
   }
