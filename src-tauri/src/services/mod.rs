@@ -2,6 +2,7 @@ pub mod apify_connector;
 pub mod candidate_review;
 pub mod canonical_weekly_aggregator;
 pub mod cost_classifier;
+pub mod cross_source_score_aggregator;
 pub mod discovery_crawler;
 pub mod duckdb_service;
 pub mod entity_detector;

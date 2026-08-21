@@ -10,6 +10,7 @@ This is the MVP local storage boundary for AI Agent Trend Radar. It is intention
 - `entity_review_decisions` stores durable approve/ignore decisions for unknown candidates.
 - `weekly_agent_metrics` stores report-ready weekly aggregates by agent and region.
 - `weekly_entity_metrics` stores canonical UUID-based weekly aggregates for resolved mentions.
+- `cross_source_entity_scores` stores versioned trusted-ranking scores derived from canonical conversation metrics and approved registry evidence.
 - `canonical_entities` stores opaque, source-independent AI technology identities.
 - `source_collection_runs` stores bounded external-source collection attempts.
 - `source_records` stores durable external objects outside the Threads post model.
@@ -180,6 +181,45 @@ Canonical aggregation includes only mentions where `entity_id` is present, `iden
 
 Rebuild is idempotent and transactional: existing derived canonical rows are deleted and all eligible weeks are inserted in one transaction. A failed insert rolls back to the previous derived state. Dashboard loaders rank only the maximum available week per requested region, matching the legacy dashboard convention.
 
+### cross_source_entity_scores
+
+Versioned, additive IMP-07 score rows for the latest trusted canonical conversation week. This table does not replace or mutate either weekly metrics table.
+
+- Unique score bucket: `(score_version, week_start, entity_id, region)`.
+- `score_version`: Formula contract, currently `cross-source-v1-proposal`.
+- Canonical snapshot: `entity_id`, `canonical_name`, and `entity_type` from an active canonical entity.
+- Regional bucket: `week_start`, `week_end`, and either `indonesia` or `global`. Unknown-region evidence remains diagnostic and is not folded into either ranking.
+- Input counts: mention count, approved registry record count, and conversation source count.
+- Conversation factors: normalized mention count, sentiment, cost signal, regional display strength, and combined conversation score.
+- Cross-source factors: approved registry presence, trusted source diversity, explicit review confidence, and current-week recency.
+- Explainability: signed sentiment/cost adjustments, factor breakdown JSON, and source evidence JSON.
+- `cross_source_score`: Versioned final score in the `0..100` range.
+- `ranking_label`: `trusted_ranking` for persisted IMP-07 rows.
+- Timestamps: local creation and update timestamps for the derived row.
+
+Trusted persistence requires a current `weekly_entity_metrics` row, resolved active canonical identity, and Indonesia or Global region. An active ExplainX record contributes registry and review-confidence factors only through an explicitly approved `same_entity` link. Pending, rejected, ambiguous, child-resource, related-entity, and mentioned-entity relationships never contribute registry boost.
+
+Registry-only identities are returned as `watchlist` diagnostics and create no score row. Missing, unresolved, or ambiguous identities are returned as `needs_review`; generic, rejected, no-product, unsupported-relationship, and unknown-region evidence is returned as `excluded_from_score`. These diagnostics remain outside `cross_source_entity_scores`.
+
+The rebuild is transactional and idempotent per score version and week. It deletes only derived rows for the selected version/week bucket, inserts the replacement trusted rows, preserves historical weeks, and rolls back to the previous score set on failure. Formula or normalization changes require a new score version.
+
+Prototype formula:
+
+```text
+conversation_score =
+    mention_count_score * 0.55
+  + sentiment_score     * 0.25
+  + cost_signal_score   * 0.15
+  + recency_score       * 0.05
+
+cross_source_score =
+    conversation_score      * 0.55
+  + registry_score          * 0.20
+  + source_diversity_score  * 0.10
+  + review_confidence_score * 0.10
+  + recency_score           * 0.05
+```
+
 ## Multi-Source Foundation
 
 The Phase A multi-source tables are additive. They do not replace `threads_posts_raw` or change weekly aggregation. IMP-03 adds optional canonical IDs to `agent_mentions` while preserving its original string fields.
@@ -322,4 +362,4 @@ DuckDB currently rejects updates to a parent row referenced by a foreign key, ev
 - The Apify connector is an experimental fallback. Its extra source metadata is additive and should be reviewed for compliance before production use.
 - Apify applies an entity-first gate before raw storage. Generic AI/MCP context is not sufficient; a known concrete alias or strict product-like unknown candidate must be detected. Recruitment/job posts are filtered unless a concrete named entity is present.
 - Apify enforces the actor's minimum of 10 max posts. Its synchronous run timeout defaults to 300 seconds and is configurable with `APIFY_RUN_TIMEOUT_SECONDS` within a 30-900 second bound.
-- Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `weekly_entity_metrics`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.
+- Local demo reset clears `threads_posts_raw`, `agent_mentions`, `weekly_agent_metrics`, `weekly_entity_metrics`, `cross_source_entity_scores`, `crawl_runs`, and optional `crawl_seed_results` while preserving `entity_review_decisions`.

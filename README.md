@@ -42,6 +42,7 @@ The application is designed as a local-first desktop app, using DuckDB for local
 - Region classification for Indonesia, global, and unknown signals.
 - Sentiment and cost/boros signal classification.
 - Weekly aggregation with trend score ranking.
+- Versioned cross-source scoring from canonical conversation metrics and approved ExplainX identity evidence.
 - Markdown and CSV weekly report export.
 
 ## Entity Categories
@@ -135,6 +136,9 @@ Run AI Agent Discovery Crawl
 → Classify Sentiments
 → Classify Cost Signals
 → Aggregate Weekly Metrics
+→ Link Mentions to Canonical Entities
+→ Aggregate Canonical Weekly Metrics
+→ Aggregate Cross-source Scores
 → Export Markdown/CSV Report
 ```
 
@@ -192,6 +196,18 @@ canonical metadata. Reviewers can explicitly approve, reject, or mark a relation
 select its relationship type, and inspect append-only decision history. These decisions update the
 effective source/entity link transactionally; they do not auto-approve Candidate Review items or
 change the existing weekly metrics pipeline.
+
+## Cross-source Score Preview
+
+The read-only `Cross-source Score Preview` combines the latest resolved canonical conversation
+metrics with active ExplainX records that have an explicitly approved `same_entity` relationship.
+Indonesia and Global remain separate cohorts. Conversation evidence is required for trusted
+ranking, so registry-only identities remain on a watchlist and pending, ambiguous, missing, or
+rejected identity evidence remains outside score rows.
+
+The prototype stores explainable factors under score version `cross-source-v1-proposal`. It does
+not implement momentum, week-over-week velocity, Programming Fit, automatic identity approval, or
+live ExplainX scraping, and it does not change existing weekly reports.
 
 ## Review Web Demo
 

@@ -36,6 +36,7 @@ fn main() {
             commands::costs::classify_cost_signals,
             commands::weekly::aggregate_weekly_metrics,
             commands::weekly::aggregate_weekly_entity_metrics,
+            commands::weekly::aggregate_cross_source_entity_scores,
             commands::reports::export_weekly_report_markdown,
             commands::reports::export_weekly_metrics_csv
         ])
