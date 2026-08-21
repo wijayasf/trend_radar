@@ -1,37 +1,37 @@
 # Latest Handoff
 
 Date: 2026-08-21
-Session: 054-cross-source-scoring-design
+Session: 055-cross-source-scoring-calibration
 Agent: Codex
 
 ## Current State
 
-PR #1 and PR #2 were merged to `main` in stacked order through merge commits `9bdf81e` and `87002c3`. Work continues on `design/cross-source-scoring-momentum` as a documentation-only design checkpoint. IMP-07 has not started.
+PR #1 and PR #2 were merged to `main` in stacked order through merge commits `9bdf81e` and `87002c3`. DESIGN-01 and CAL-01 now live on `design/cross-source-scoring-momentum` as documentation-only checkpoints. IMP-07 has not started.
 
 ## Key Changes
 
-- Added a proposed model that keeps conversation, registry, identity-review, recency, and regional signals independently explainable.
-- Restricted trusted registry contribution to human-approved `same_entity` ExplainX links.
-- Proposed a versioned weighted formula with a required conversation row so listed-only tools cannot enter trusted rankings.
-- Defined future momentum/WoW semantics but excluded them from the recommended IMP-07 scope.
-- Recommended an additive `cross_source_entity_scores` prototype and read-only UI preview without changing existing weekly tables.
+- Added a synthetic calibration fixture with eight identity and evidence cases.
+- Locked a proposed region-local normalization and factor formula under `cross-source-v1-proposal`.
+- Expected Global order is Claude Code, Ponytail, and Caveman; Claude Code is the only Indonesia trusted row.
+- FlowPilot remains registry-only watchlist evidence; pending, ambiguous, missing-alias, and no-product cases remain outside trusted scores.
+- Added deterministic fixture assertions and minimum IMP-07 acceptance criteria without implementing IMP-07.
 
 ## Validation Snapshot
 
-- PR #1 and PR #2 merged cleanly and post-merge local validation passed before this design session.
-- Session-054 frontend build, Rust formatting, locked check, default test suite, security scan, and diff check passed.
+- DESIGN-01 passed frontend build, Rust formatting, locked check, default test suite, security scan, and diff check.
+- CAL-01 fixture parse, factor recomputation, regional ranking, frontend build, Rust formatting, locked check, default tests, security scan, and diff check passed.
 - Rust result: 86 passed, 0 failed, 1 intentionally ignored live Threads test; seven unchanged dead-code warnings remain.
 - No application code, schema, score implementation, momentum calculation, Programming Fit, or live collector work was performed.
 
 ## Pending
 
-- Review and approve the scoring design and its open calibration questions.
-- Define a small expected-ranking fixture before IMP-07 implementation.
-- Do not start IMP-07 until its exact score contract and acceptance cases are approved.
+- Review and approve CAL-01 factor formulas, labels, expected ranks, and exclusion behavior.
+- Treat the fixture as the deterministic IMP-07 test oracle only after explicit approval.
+- Do not start IMP-07 until this calibration checkpoint is accepted.
 
 ## Risk Note
 
-ExplainX registry presence can over-rank listed-but-undiscussed tools unless the conversation-evidence gate remains mandatory. Sparse Indonesia data needs independent normalization. Weight changes require explicit score versioning so historical values remain auditable.
+The proposed fixture normalization is intentionally specific and may need a new score version after real-data calibration. ExplainX registry presence must remain conversation-gated, and sparse Indonesia data must remain independently normalized.
 
 ## Token Usage
 

@@ -1,0 +1,384 @@
+{
+  "fixture_version": "cal-01-v1",
+  "score_version": "cross-source-v1-proposal",
+  "description": "Synthetic deterministic calibration data for IMP-07 design review. No live source data.",
+  "week": {
+    "week_start": "2026-08-17",
+    "week_end": "2026-08-23",
+    "computed_at": "2026-08-23T23:59:59Z"
+  },
+  "trusted_surfaces": ["threads", "apify", "explainx"],
+  "numeric_tolerance": 0.02,
+  "formula": {
+    "mention_count_score": "100 * ln(1 + mention_count) / ln(1 + max_eligible_mentions_in_same_week_and_region)",
+    "sentiment_score": "clamp(50 + 50 * (positive_count - negative_count) / mention_count - 15 * mixed_count / mention_count, 0, 100)",
+    "cost_signal_score": "clamp(50 + 50 * (cost_positive_count - cost_negative_boros_count) / mention_count - 20 * cost_mixed_count / mention_count, 0, 100)",
+    "source_diversity_score": "100 * distinct_trusted_surface_count / 3",
+    "conversation_score": "mention_count_score * 0.55 + sentiment_score * 0.25 + cost_signal_score * 0.15 + recency_score * 0.05",
+    "cross_source_score": "conversation_score * 0.55 + registry_presence_score * 0.20 + source_diversity_score * 0.10 + review_confidence_score * 0.10 + recency_score * 0.05"
+  },
+  "entities": [
+    {
+      "fixture_key": "claude-code",
+      "display_name": "Claude Code",
+      "primary_type": "agent_tool",
+      "canonical_identity": {
+        "state": "resolved",
+        "entity_id": "10000000-0000-4000-8000-000000000001",
+        "status": "active"
+      },
+      "conversation": [
+        {
+          "region": "global",
+          "mention_count": 24,
+          "positive_count": 14,
+          "neutral_count": 5,
+          "negative_count": 2,
+          "mixed_count": 3,
+          "cost_positive_count": 4,
+          "cost_negative_boros_count": 3,
+          "cost_mixed_count": 2,
+          "cost_not_mentioned_count": 15,
+          "source_types": ["threads", "apify"],
+          "last_seen_at": "2026-08-23T16:00:00Z"
+        },
+        {
+          "region": "indonesia",
+          "mention_count": 5,
+          "positive_count": 3,
+          "neutral_count": 1,
+          "negative_count": 0,
+          "mixed_count": 1,
+          "cost_positive_count": 1,
+          "cost_negative_boros_count": 1,
+          "cost_mixed_count": 0,
+          "cost_not_mentioned_count": 3,
+          "source_types": ["threads", "apify"],
+          "last_seen_at": "2026-08-23T14:00:00Z"
+        }
+      ],
+      "registry": {
+        "source": "explainx",
+        "record_exists": true,
+        "record_status": "active",
+        "relationship_type": "same_entity",
+        "review_state": "approved",
+        "last_seen_at": "2026-08-22T10:00:00Z"
+      },
+      "expected": {
+        "label": "trusted_ranking",
+        "global_rank": 1,
+        "indonesia_rank": 1,
+        "global_factors": {
+          "mention_count_score": 100.0,
+          "sentiment_score": 73.13,
+          "cost_signal_score": 50.42,
+          "region_signal_score": 100.0,
+          "registry_presence_score": 100.0,
+          "source_diversity_score": 100.0,
+          "review_confidence_score": 100.0,
+          "recency_score": 100.0,
+          "conversation_score": 85.84,
+          "cross_source_score": 92.21
+        },
+        "indonesia_factors": {
+          "mention_count_score": 100.0,
+          "sentiment_score": 77.0,
+          "cost_signal_score": 50.0,
+          "region_signal_score": 100.0,
+          "registry_presence_score": 100.0,
+          "source_diversity_score": 100.0,
+          "review_confidence_score": 100.0,
+          "recency_score": 100.0,
+          "conversation_score": 86.75,
+          "cross_source_score": 92.71
+        }
+      }
+    },
+    {
+      "fixture_key": "ponytail",
+      "display_name": "Ponytail",
+      "primary_type": "skill_mode",
+      "canonical_identity": {
+        "state": "resolved",
+        "entity_id": "10000000-0000-4000-8000-000000000002",
+        "status": "active"
+      },
+      "conversation": [
+        {
+          "region": "global",
+          "mention_count": 14,
+          "positive_count": 8,
+          "neutral_count": 4,
+          "negative_count": 1,
+          "mixed_count": 1,
+          "cost_positive_count": 1,
+          "cost_negative_boros_count": 1,
+          "cost_mixed_count": 1,
+          "cost_not_mentioned_count": 11,
+          "source_types": ["threads", "apify"],
+          "last_seen_at": "2026-08-23T12:00:00Z"
+        }
+      ],
+      "registry": {
+        "source": "explainx",
+        "record_exists": true,
+        "record_status": "active",
+        "relationship_type": "same_entity",
+        "review_state": "pending",
+        "last_seen_at": "2026-08-22T09:00:00Z"
+      },
+      "expected": {
+        "label": "trusted_ranking",
+        "global_rank": 2,
+        "indonesia_rank": null,
+        "registry_evidence_included": false,
+        "global_factors": {
+          "mention_count_score": 84.13,
+          "sentiment_score": 73.93,
+          "cost_signal_score": 48.57,
+          "region_signal_score": 84.13,
+          "registry_presence_score": 0.0,
+          "source_diversity_score": 66.67,
+          "review_confidence_score": 0.0,
+          "recency_score": 100.0,
+          "conversation_score": 77.04,
+          "cross_source_score": 54.04
+        }
+      }
+    },
+    {
+      "fixture_key": "caveman",
+      "display_name": "Caveman",
+      "primary_type": "skill_mode",
+      "canonical_identity": {
+        "state": "resolved",
+        "entity_id": "10000000-0000-4000-8000-000000000003",
+        "status": "active"
+      },
+      "conversation": [
+        {
+          "region": "global",
+          "mention_count": 8,
+          "positive_count": 3,
+          "neutral_count": 3,
+          "negative_count": 1,
+          "mixed_count": 1,
+          "cost_positive_count": 0,
+          "cost_negative_boros_count": 1,
+          "cost_mixed_count": 1,
+          "cost_not_mentioned_count": 6,
+          "source_types": ["threads"],
+          "last_seen_at": "2026-08-22T18:00:00Z"
+        }
+      ],
+      "registry": {
+        "source": "explainx",
+        "record_exists": false,
+        "record_status": null,
+        "relationship_type": null,
+        "review_state": null,
+        "last_seen_at": null
+      },
+      "expected": {
+        "label": "trusted_ranking",
+        "global_rank": 3,
+        "indonesia_rank": null,
+        "global_factors": {
+          "mention_count_score": 68.26,
+          "sentiment_score": 60.63,
+          "cost_signal_score": 41.25,
+          "region_signal_score": 68.26,
+          "registry_presence_score": 0.0,
+          "source_diversity_score": 33.33,
+          "review_confidence_score": 0.0,
+          "recency_score": 100.0,
+          "conversation_score": 63.89,
+          "cross_source_score": 43.47
+        }
+      }
+    },
+    {
+      "fixture_key": "flowpilot",
+      "display_name": "FlowPilot",
+      "primary_type": "agent_tool",
+      "canonical_identity": {
+        "state": "resolved",
+        "entity_id": "10000000-0000-4000-8000-000000000004",
+        "status": "active"
+      },
+      "conversation": [],
+      "registry": {
+        "source": "explainx",
+        "record_exists": true,
+        "record_status": "active",
+        "relationship_type": "same_entity",
+        "review_state": "approved",
+        "last_seen_at": "2026-08-22T08:00:00Z"
+      },
+      "expected": {
+        "label": "watchlist",
+        "global_rank": null,
+        "indonesia_rank": null,
+        "score_row_created": false,
+        "reason": "Approved registry identity exists, but current conversation evidence is required for trusted ranking."
+      }
+    },
+    {
+      "fixture_key": "novaforge",
+      "display_name": "NovaForge",
+      "primary_type": "agent_tool",
+      "canonical_identity": {
+        "state": "unresolved",
+        "entity_id": null,
+        "status": null
+      },
+      "conversation": [],
+      "registry": {
+        "source": "explainx",
+        "record_exists": true,
+        "record_status": "active",
+        "relationship_type": "same_entity",
+        "review_state": "pending",
+        "last_seen_at": "2026-08-22T07:00:00Z"
+      },
+      "expected": {
+        "label": "needs_review",
+        "global_rank": null,
+        "indonesia_rank": null,
+        "score_row_created": false,
+        "reason": "Pending registry identity and no resolved canonical conversation identity."
+      }
+    },
+    {
+      "fixture_key": "codex-ambiguous",
+      "display_name": "Codex",
+      "primary_type": "other",
+      "canonical_identity": {
+        "state": "ambiguous",
+        "entity_id": null,
+        "status": null
+      },
+      "conversation": [
+        {
+          "region": "global",
+          "mention_count": 7,
+          "positive_count": 2,
+          "neutral_count": 3,
+          "negative_count": 1,
+          "mixed_count": 1,
+          "cost_positive_count": 0,
+          "cost_negative_boros_count": 1,
+          "cost_mixed_count": 1,
+          "cost_not_mentioned_count": 5,
+          "source_types": ["threads"],
+          "last_seen_at": "2026-08-23T09:00:00Z"
+        }
+      ],
+      "registry": {
+        "source": "explainx",
+        "record_exists": true,
+        "record_status": "active",
+        "relationship_type": "same_entity",
+        "review_state": "ambiguous",
+        "last_seen_at": "2026-08-21T08:00:00Z"
+      },
+      "expected": {
+        "label": "needs_review",
+        "global_rank": null,
+        "indonesia_rank": null,
+        "score_row_created": false,
+        "reason": "Ambiguous alias and external identity must not be fuzzy-merged or trusted-scored."
+      }
+    },
+    {
+      "fixture_key": "unknown-new-tool",
+      "display_name": "UnknownNewTool",
+      "primary_type": "other",
+      "canonical_identity": {
+        "state": "missing_alias",
+        "entity_id": null,
+        "status": null
+      },
+      "conversation": [
+        {
+          "region": "global",
+          "mention_count": 4,
+          "positive_count": 1,
+          "neutral_count": 2,
+          "negative_count": 0,
+          "mixed_count": 1,
+          "cost_positive_count": 0,
+          "cost_negative_boros_count": 0,
+          "cost_mixed_count": 0,
+          "cost_not_mentioned_count": 4,
+          "source_types": ["apify"],
+          "last_seen_at": "2026-08-22T11:00:00Z"
+        }
+      ],
+      "registry": {
+        "source": "explainx",
+        "record_exists": false,
+        "record_status": null,
+        "relationship_type": null,
+        "review_state": null,
+        "last_seen_at": null
+      },
+      "expected": {
+        "label": "needs_review",
+        "global_rank": null,
+        "indonesia_rank": null,
+        "score_row_created": false,
+        "reason": "Missing canonical alias; candidate evidence remains outside trusted scoring."
+      }
+    },
+    {
+      "fixture_key": "generic-mcp-roundup",
+      "display_name": "MCP Weekly Roundup",
+      "primary_type": "other",
+      "canonical_identity": {
+        "state": "no_product_entity",
+        "entity_id": null,
+        "status": null
+      },
+      "conversation": [
+        {
+          "region": "global",
+          "mention_count": 6,
+          "positive_count": 1,
+          "neutral_count": 5,
+          "negative_count": 0,
+          "mixed_count": 0,
+          "cost_positive_count": 0,
+          "cost_negative_boros_count": 0,
+          "cost_mixed_count": 0,
+          "cost_not_mentioned_count": 6,
+          "source_types": ["threads"],
+          "last_seen_at": "2026-08-23T08:00:00Z"
+        }
+      ],
+      "registry": {
+        "source": "explainx",
+        "record_exists": true,
+        "record_status": "active",
+        "relationship_type": "mentioned_entity",
+        "review_state": "rejected",
+        "last_seen_at": "2026-08-20T08:00:00Z"
+      },
+      "expected": {
+        "label": "excluded_from_score",
+        "global_rank": null,
+        "indonesia_rank": null,
+        "score_row_created": false,
+        "reason": "Generic editorial MCP evidence has no canonical product identity and its proposed relationship was rejected."
+      }
+    }
+  ],
+  "expected_rankings": {
+    "global": ["Claude Code", "Ponytail", "Caveman"],
+    "indonesia": ["Claude Code"],
+    "watchlist": ["FlowPilot"],
+    "needs_review": ["NovaForge", "Codex", "UnknownNewTool"],
+    "excluded_from_score": ["MCP Weekly Roundup"]
+  }
+}
