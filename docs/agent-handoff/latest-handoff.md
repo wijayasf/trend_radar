@@ -6,7 +6,7 @@ Agent: Codex
 
 ## Current State
 
-PR #1 through PR #4 are merged on `main`. IMP-07 is implemented and fully validated on `feature/imp-07-cross-source-score-prototype` from the approved DESIGN-01, CAL-01 fixture, and merged implementation brief. Commit, push, draft PR, and human review remain pending.
+PR #1 through PR #4 are merged on `main`. IMP-07 is implemented and fully validated on `feature/imp-07-cross-source-score-prototype` from the approved DESIGN-01, CAL-01 fixture, and merged implementation brief. Implementation commit `6205009` is pushed and draft PR #5 is open for CI and human review.
 
 ## Key Changes
 
@@ -27,7 +27,7 @@ PR #1 through PR #4 are merged on `main`. IMP-07 is implemented and fully valida
 
 ## Pending
 
-- Commit, push, and open the IMP-07 draft PR.
+- Wait for draft PR #5 CI and human review.
 - Review schema additivity, fixture score parity, registry gating, diagnostics, and UI explainability before merge.
 - Do not start momentum, WoW, velocity, or Programming Fit work.
 

@@ -91,7 +91,7 @@ Implement the smallest safe, explainable cross-source score prototype from the m
 
 ## Recommended Next Step
 
-Commit and push the validated IMP-07 checkpoint, then open a draft PR. Human review should verify the factor explanation and persistence boundaries before any momentum design begins.
+Review draft PR #5 and wait for its CI checks. Human review should verify the factor explanation and persistence boundaries before any merge or momentum design begins.
 
 ## Token Usage
 
